@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "harness"
+version = "0.1.0"
+description = "Детерминированный control plane для оркестрации агентов Cursor"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+# Нужен только ролям с runner=sdk. Массовый воркер на runner=cli работает без него.
+sdk = ["cursor-sdk"]
+# Durable-плейн: DBOS поверх Postgres (ADR-0003 Фаза 2). Без него движок работает
+# на SQLite-сторе как раньше; durable-режим включается флагом и требует Postgres.
+durable = ["dbos"]
+# Telegram-нотификации и бот (httpx.AsyncClient). Без него — нотификации в консоль.
+telegram = ["httpx"]
+dev = ["ruff", "mypy", "pytest"]
+
+[project.scripts]
+harness = "harness.interface.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["harness*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "PL"]
+ignore = ["PLR2004", "PLR0913"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unused_ignores = true
+ignore_missing_imports = true
+
+# DBOS — сторонняя библиотека без типов: её декораторы/базовый класс приходят как Any.
+# Ослабляем только два strict-правила в durable-слое, остальное остаётся строгим.
+[[tool.mypy.overrides]]
+module = "harness.durable.*"
+disallow_untyped_decorators = false
+disallow_subclassing_any = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

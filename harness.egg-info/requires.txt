@@ -1,0 +1,14 @@
+
+[dev]
+ruff
+mypy
+pytest
+
+[durable]
+dbos
+
+[sdk]
+cursor-sdk
+
+[telegram]
+httpx

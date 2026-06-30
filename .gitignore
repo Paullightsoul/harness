@@ -1,0 +1,20 @@
+# orchestration runtime
+logs/
+*.log
+.worktrees/
+
+# harness state (sqlite + durable runtime), но профиль проекта трекаем
+.harness/*
+!.harness/project.toml
+.dbos/
+
+# секреты / локальная конфигурация
+.env
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/

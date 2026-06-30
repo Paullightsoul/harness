@@ -1,0 +1,22 @@
+# Postgres для durable-плейна harness (DBOS system database, ADR-0003 Фаза 2).
+# Поднять:  make pg-up   Остановить:  make pg-down   Логи:  docker compose logs -f
+services:
+  postgres:
+    image: postgres:16
+    container_name: harness-postgres
+    environment:
+      POSTGRES_USER: harness
+      POSTGRES_PASSWORD: harness
+      POSTGRES_DB: harness
+    ports:
+      - "5439:5432"
+    volumes:
+      - harness_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U harness -d harness"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  harness_pg:

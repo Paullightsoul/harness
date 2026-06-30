@@ -1,0 +1,16 @@
+# Профиль проекта для самого harness (dogfood). Языко-независимые гейты —
+# ось 3, ADR-0003. Воркер/ревьюер гоняют именно эти команды, а не зашитый make.
+language = "python"
+canon = "python-backend"
+
+[[gates]]
+id = "lint"
+cmd = "ruff check harness tests"
+
+[[gates]]
+id = "types"
+cmd = "mypy harness"
+
+[[gates]]
+id = "test"
+cmd = "pytest -q"
