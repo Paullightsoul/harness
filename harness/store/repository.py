@@ -266,6 +266,56 @@ class Store:
             ).fetchall()
         return [_row_to_agent_event(r) for r in rows]
 
+    # ── Metrics (v2-030: pass@k / pass^k) ──────────────────────────────────────
+    def _tasks_for_metrics(self, run_id: str) -> list[Task]:
+        """Задачи, участвующие в pass@k/pass^k — trivial исключены.
+
+        Trivial tier auto-approve'ится на первых зелёных гейтах без ревьюера
+        (v2-019), поэтому его "попытки" не несут сигнала "справился ли агент с
+        ревью/фидбэком" — единственное, что измеряют эти метрики.
+        """
+        return [t for t in self.list_tasks(run_id) if t.complexity != "trivial"]
+
+    def pass_at_k(self, run_id: str, k: int) -> float | None:
+        """Доля задач, у которых хотя бы одна из первых `k` попыток получила
+        `verdict == "approve"` (ECC `skills/eval-harness`: "справился ли агент
+        хотя бы за k попыток"). Задачи без попыток не учитываются в знаменателе.
+        `None`, если учитывать нечего (нет задач с попытками).
+        """
+        considered = 0
+        passed = 0
+        for task in self._tasks_for_metrics(run_id):
+            attempts = self.list_attempts(run_id, task.id)
+            if not attempts:
+                continue
+            considered += 1
+            if any(a.verdict == "approve" for a in attempts[:k]):
+                passed += 1
+        return (passed / considered) if considered else None
+
+    def pass_all_k(self, run_id: str, k: int) -> float | None:
+        """Доля задач, у которых ВСЕ первые `k` попыток (или все имеющиеся, если
+        их меньше `k`) прошли гейты — "pass^k", строгая версия pass@k (там любая
+        одна из k, тут все).
+
+        Использует `gates_passed` (детерминированный "оракул истины"), а не
+        `verdict`: в последовательном escalation-цикле approve возможен максимум
+        на одной (последней, финальной) попытке задачи — "все k попыток
+        approve" был бы вырожденным (≈0 при k>1). Gates — сигнал, который может
+        повторяться много раз подряд, поэтому pass^k осмысленно измеряет
+        стабильность («код рабочий с самого начала», а не «в итоге дожали»).
+        """
+        considered = 0
+        passed = 0
+        for task in self._tasks_for_metrics(run_id):
+            attempts = self.list_attempts(run_id, task.id)
+            if not attempts:
+                continue
+            considered += 1
+            if all(a.gates_passed for a in attempts[:k]):
+                passed += 1
+        return (passed / considered) if considered else None
+
 
 # ── мапперы строк ─────────────────────────────────────────────────────────────
 def _row_to_run(r: sqlite3.Row) -> Run:

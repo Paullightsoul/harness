@@ -166,6 +166,25 @@ def cmd_approve(settings: Settings, args: argparse.Namespace) -> int:
     return cmd_status(settings, argparse.Namespace(run_id=run_id))
 
 
+def _metrics_summary(store: Store, run_id: str) -> dict[str, float | None]:
+    """v2-030: pass@1/pass@3 (≥1 из k попыток approve) + pass^3 (все k попыток green-gate)."""
+    return {
+        "pass@1": store.pass_at_k(run_id, 1),
+        "pass@3": store.pass_at_k(run_id, 3),
+        "pass^3": store.pass_all_k(run_id, 3),
+    }
+
+
+def _format_metrics_line(store: Store, run_id: str) -> str:
+    """'Metrics: pass@1=0.70 pass@3=0.91 pass^3=0.34' — пусто, если считать не по чему."""
+    parts = [
+        f"{name}={value:.2f}"
+        for name, value in _metrics_summary(store, run_id).items()
+        if value is not None
+    ]
+    return "Metrics: " + " ".join(parts) if parts else ""
+
+
 def _format_status_markdown(run_id: str, store: Store) -> str:
     """v2-012: portable markdown-снапшот для handoff между сменами/чата.
 
@@ -195,6 +214,14 @@ def _format_status_markdown(run_id: str, store: Store) -> str:
         f"- done: **{done}** / ready: {ready} / running: {running} / blocked: {len(blocked)}",
         f"- completion: **{done / len(tasks) * 100:.0f}%**" if tasks else "- completion: —",
         "",
+    ]
+    metrics_line = _format_metrics_line(store, run_id)
+    if metrics_line:
+        lines.append("## Metrics")
+        lines.append("")
+        lines.append(f"- {metrics_line}")
+        lines.append("")
+    lines += [
         "## Tasks",
         "",
         "| id | status | attempts | deps | complexity | title |",
@@ -276,6 +303,9 @@ def cmd_status(settings: Settings, args: argparse.Namespace) -> int:
 
     print(f"run {run_id} [{run.status}]  потрачено: {run.spent_credits:.2f}"
           + (f"/{run.budget_credits:.2f}" if run.budget_credits else ""))
+    metrics_line = _format_metrics_line(store, run_id)
+    if metrics_line:
+        print(f"  {metrics_line}")
     for t in store.list_tasks(run_id):
         deps = ",".join(t.depends_on) or "-"
         suffix = f"  task-{t.id:<5} {t.status:<12} deps[{deps}] attempts={t.attempts}  {t.title}"

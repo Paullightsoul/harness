@@ -123,3 +123,39 @@ def test_status_subparser_accepts_markdown_and_write_flags() -> None:
     assert args.markdown is True
     assert args.write == "/tmp/s.md"
     assert args.run_id == "run-x"
+
+
+def _add_approved_attempt(store: Store, run_id: str, task_id: str) -> None:
+    attempt_id = store.start_attempt(run_id, task_id, 1, model="auto")
+    store.finish_attempt(
+        attempt_id, run_id=run_id, task_id=task_id, worker_output="",
+        gates_passed=True, verdict="approve", cost_credits=0.1,
+    )
+
+
+def test_status_markdown_includes_metrics_when_attempts_exist(tmp_path: Path) -> None:
+    """v2-030: блок ## Metrics с pass@k появляется, когда есть хотя бы одна попытка."""
+    store, run_id = _seed_store(tmp_path)
+    _add_approved_attempt(store, run_id, "001")
+
+    md = cli_module._format_status_markdown(run_id, store)
+    assert "## Metrics" in md
+    assert "pass@1=" in md
+
+
+def test_status_plain_text_includes_metrics_line_when_attempts_exist(
+    tmp_path: Path, capsys,
+) -> None:
+    store, run_id = _seed_store(tmp_path)
+    _add_approved_attempt(store, run_id, "001")
+    args = argparse.Namespace(run_id=run_id, markdown=False, write=None, project=None)
+
+    orig = cli_module._store
+    cli_module._store = lambda settings: store  # type: ignore[assignment]
+    try:
+        rc = cli_module.cmd_status(_settings(tmp_path), args)
+    finally:
+        cli_module._store = orig  # type: ignore[assignment]
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "Metrics: pass@1=" in captured.out
