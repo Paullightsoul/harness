@@ -24,6 +24,7 @@ from harness.domain.models import AgentEvent, Review, Task
 from harness.domain.state_machine import RECOVERABLE_STATUSES
 from harness.gates.base import GateResult
 from harness.gates.profile_gate import ProfileGate
+from harness.integrations.github import GitHubCli, PullRequest
 from harness.interface.notify import build_notifier
 from harness.policy.budget import BudgetExceeded, CostGovernor
 from harness.policy.escalation import EscalationLadder
@@ -35,9 +36,12 @@ from harness.runner.factory import build_runner
 from harness.sandbox.factory import build_sandbox
 from harness.scheduler.dag import TaskGraph
 from harness.store.repository import Store
-from harness.worktree.manager import WorktreeManager
+from harness.worktree.manager import MergeOutcome, WorktreeManager
 
 _VERDICT_RE = "VERDICT:"
+# v2-029: конфликтный diff может быть большим (combined-diff по нескольким файлам) —
+# обрезаем хвостом, чтобы не раздувать контекст следующей попытки.
+_CONFLICT_DIFF_MAX_LINES = 200
 
 
 class Engine:
@@ -133,6 +137,7 @@ class Engine:
         )
         outcome = await self._worktrees.merge_to_base(task.branch, f"task({task_id})")
         if not outcome.merged:
+            self._record_merge_eviction(run_id, task_id, outcome)
             self._advance(run_id, task_id, TaskStatus.READY, note="merge conflict при approve")
             await self._notifier.notify("Конфликт мержа", f"run {run_id}, task-{task_id}")
             return
@@ -165,7 +170,10 @@ class Engine:
                 # brief с missing_context → ставим паузу, ждём ответа пользователя.
                 return
 
-        feedback = ""
+        # v2-029: если предыдущий заход упал на merge-конфликте, первая попытка
+        # этого захода получает eviction context (файлы+diff конфликта) как
+        # стартовый feedback — не слепой retry с чистого листа.
+        feedback = self._consume_eviction_context(task_id)
         for attempt_no in range(1, self._s.max_attempts + 1):
             self._governor.check(self._spent(run_id))
 
@@ -244,6 +252,11 @@ class Engine:
                 run_id, EventType.GATE_RESULT, task_id=task_id,
                 detail={"passed": gate.passed},
             )
+
+            # v2-028: de-sloppify — отдельный focused cleanup-pass после зелёных
+            # гейтов, перед reviewer. Ревьюер увидит уже очищенный diff (diff/changed
+            # ниже читаются ПОСЛЕ этого вызова).
+            gate = await self._run_de_sloppify(run_id, task_id, task, worktree, branch, gate)
 
             # 3) ANTI-GAMING GUARD: воркер не должен править зону спеков/acceptance
             task = self._advance(run_id, task_id, TaskStatus.REVIEW)
@@ -379,6 +392,9 @@ class Engine:
                 f"Гейты: {'PASS' if gate.passed else 'FAIL'}.\n{rres.text}\n\n"
                 f"--- хвост гейтов ---\n{gate.output}"
             )
+            # v2-032: strategic compaction — если контекст этой попытки заканчивался,
+            # следующая попытка получает подсказку скомпактить его самой (не авто).
+            feedback += self._strategic_compact_hint(wres)
             # На последней попытке НЕ возвращаем в READY: оставляем в REVIEW, чтобы
             # эскалация была валидным переходом REVIEW -> ESCALATE.
             if attempt_no < self._s.max_attempts:
@@ -441,7 +457,9 @@ class Engine:
 
         outcome = await self._worktrees.merge_to_base(branch, f"task({task_id})")
         if not outcome.merged:
-            # конфликт интеграции -> назад в работу с пометкой
+            # v2-029: eviction context — конфликт интеграции больше не «слепой retry»
+            # с пустым feedback; следующая попытка получит файлы+diff конфликта.
+            self._record_merge_eviction(run_id, task_id, outcome)
             task = self._require_task(run_id, task_id)
             self._store.transition_task(task, TaskStatus.READY, note="merge conflict")
             return
@@ -452,6 +470,105 @@ class Engine:
             self._store.add_event(run_id, EventType.ERROR, task_id=task_id,
                                   detail={"reason": "post-merge gate failed"})
         await self._complete_merge(run_id, task_id, branch)
+
+    # ── v2-029: merge queue eviction context ─────────────────────────────────
+    def _eviction_context_path(self, task_id: str) -> Path:
+        """Файл вне worktree (дом harness) — переживает пересоздание worktree/ветки
+        следующей попытки (`WorktreeManager.create` пересоздаёт ветку от base)."""
+        return self._s.root / "tasks" / f"task-{task_id}.eviction.md"
+
+    def _record_merge_eviction(
+        self, run_id: str, task_id: str, outcome: MergeOutcome,
+    ) -> None:
+        """Записать eviction context на диск + событие `MERGE_EVICTED`.
+
+        Файл читается один раз `_consume_eviction_context` в начале следующего
+        `_process_task` (attempt 1) и становится стартовым feedback воркеру.
+        """
+        path = self._eviction_context_path(task_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(_format_eviction_context(outcome), encoding="utf-8")
+        self._store.add_event(
+            run_id, EventType.MERGE_EVICTED, task_id=task_id,
+            detail={"conflicting_files": outcome.conflicting_files},
+        )
+
+    def _consume_eviction_context(self, task_id: str) -> str:
+        """Прочитать и удалить (one-shot) eviction context, если он есть.
+
+        Возвращает пустую строку, если конфликтов не было — обычный путь без
+        дополнительного feedback на первую попытку.
+        """
+        path = self._eviction_context_path(task_id)
+        if not path.exists():
+            return ""
+        text = path.read_text(encoding="utf-8")
+        path.unlink()
+        return text
+
+    async def _run_de_sloppify(
+        self,
+        run_id: str,
+        task_id: str,
+        task: Task,
+        worktree: Path,
+        branch: str,
+        gate: GateResult,
+    ) -> GateResult:
+        """v2-028: отдельный cleanup-pass после зелёных гейтов, перед reviewer.
+
+        ECC autonomous-loops §5: «два focused агента лучше одного constrained» —
+        воркер спешит закрыть acceptance criteria и оставляет мусор (debug-print,
+        мёртвый код, over-defensive checks); отдельный дешёвый агент в своём
+        контексте чистит diff, не отвлекаясь на бизнес-логику. Ревьюер получает
+        уже очищенный diff.
+
+        Пропускается: trivial tier (там reviewer вообще не участвует — гейты
+        достаточно), красные гейты (нечего чистить, пока код не рабочий), пустой
+        diff, и полностью через `HARNESS_DESLOPPIFY=0`. Если cleanup ломает гейты —
+        откат (де-слоппификация не должна влиять на бизнес-исход задачи).
+        """
+        if task.complexity == "trivial" or not gate.passed:
+            return gate
+        if os.environ.get("HARNESS_DESLOPPIFY", "1") != "1":
+            return gate
+        assert self._worktrees is not None
+
+        diff = await self._worktrees.diff_against_base(branch)
+        if not diff.strip():
+            return gate  # воркер ничего не менял — нечего чистить
+
+        prompt = self._de_sloppify_prompt(task, diff)
+        model = os.environ.get("HARNESS_DESLOPPIFY_MODEL", "auto")
+        log = self._s.root / "logs" / f"desloppify-{task_id}.log"
+        dres = await self._worker_runner.run(prompt, model=model, cwd=worktree, log_path=log)
+        self._account(run_id, dres.cost_credits, cost_kind=dres.cost_kind)
+
+        cleanup_diff = await self._worktrees.uncommitted_diff(worktree)
+        if not cleanup_diff.strip():
+            self._store.add_event(
+                run_id, EventType.DE_SLOPPIFIED, task_id=task_id,
+                detail={"applied": False, "reason": "no changes"},
+            )
+            return gate
+
+        new_gate = await self._gate.check(worktree)
+        if new_gate.passed:
+            await self._worktrees.commit_all(worktree, f"task({task_id}): de-sloppify cleanup")
+            self._store.add_event(
+                run_id, EventType.DE_SLOPPIFIED, task_id=task_id,
+                detail={"applied": True, "reverted": False},
+            )
+            return new_gate
+
+        # Cleanup сломал гейты — откатываем, задача продолжает как будто
+        # де-слоппификации не было (её цель — гигиена, не риск для исхода).
+        await self._worktrees.discard_uncommitted(worktree)
+        self._store.add_event(
+            run_id, EventType.DE_SLOPPIFIED, task_id=task_id,
+            detail={"applied": False, "reverted": True, "reason": "gates failed after cleanup"},
+        )
+        return gate
 
     async def _extract_lesson(
         self, run_id: str, task_id: str, outcome: str,
@@ -509,6 +626,9 @@ class Engine:
             detail["approved"] = True
         self._store.add_event(run_id, EventType.MERGED, task_id=task_id, detail=detail)
         await self._push_base_if_enabled(run_id, task_id)
+        # v2-033: CI failure recovery — no-op пока задачные PR не создаются
+        # автоматически (ROADMAP 3.14); safe seam на будущее.
+        await self._maybe_run_ci_recovery(run_id, task_id, branch)
         await self._worktrees.remove(task_id)
         # v2-025: lesson extraction для medium/large.
         await self._extract_lesson(run_id, task_id, outcome="DONE")
@@ -538,6 +658,94 @@ class Engine:
                 "Git push не удался",
                 f"run {run_id}, task-{task_id}: {outcome.output[:300]}",
             )
+
+    # ── v2-033: CI failure recovery ──────────────────────────────────────────
+    async def _maybe_run_ci_recovery(self, run_id: str, task_id: str, branch: str) -> None:
+        """Если для ветки задачи есть открытый GitHub PR — poll CI, fix-pass на fail.
+
+        Отключено, если `HARNESS_PUSH_AFTER_MERGE` выключен (нечего PR-ить, если
+        мы даже не пушим) или `CI_RETRY_MAX=0`. Seam для ROADMAP 3.14: сейчас
+        harness мержит локально и пушит `base` напрямую — PR на ветку `task/<id>`
+        никто не создаёт автоматически, `pr_for_branch` вернёт `None`, метод
+        no-op'ится. Когда 3.14 начнёт создавать PR на каждую задачу — этот путь
+        заработает без изменений.
+        """
+        if not self._s.push_after_merge:
+            return
+        max_retries = int(os.environ.get("CI_RETRY_MAX", "1"))
+        if max_retries <= 0:
+            return
+        assert self._worktrees is not None
+
+        gh = GitHubCli(self._repo_root)
+        pr = await gh.pr_for_branch(branch)
+        if pr is None:
+            return
+
+        worktree = self._repo_root / ".worktrees" / f"task-{task_id}"
+        if not worktree.exists():
+            return
+
+        await self._run_ci_recovery(run_id, task_id, gh, pr, branch, worktree, max_retries)
+
+    async def _run_ci_recovery(
+        self,
+        run_id: str,
+        task_id: str,
+        gh: GitHubCli,
+        pr: PullRequest,
+        branch: str,
+        worktree: Path,
+        max_retries: int,
+    ) -> None:
+        """poll → (fail) fetch логи → fix-pass → re-push → re-poll, до `max_retries` раз.
+
+        ECC Continuous Claude §"CI Failure Recovery". Не трогает статус задачи в
+        автомате (она уже DONE с точки зрения harness) — это дополнительная
+        сеть безопасности на уровне git/GitHub, а не часть DAG-цикла.
+        """
+        assert self._worktrees is not None
+        result = await gh.check_status(pr.number)
+        self._store.add_event(
+            run_id, EventType.CI_CHECK_RESULT, task_id=task_id,
+            detail={"pr": pr.number, "passed": result.all_passed,
+                    "failed_runs": result.failed_run_ids, "attempt": 0},
+        )
+        if result.all_passed:
+            return
+
+        for attempt in range(1, max_retries + 1):
+            logs = "\n\n".join(
+                [await gh.failed_run_log(rid) for rid in result.failed_run_ids[:3]]
+            ) or result.raw
+            feedback = (
+                f"=== CI FAILED (PR #{pr.number}, попытка {attempt}/{max_retries}) ===\n"
+                f"{logs[-4000:]}\n"
+            )
+            task = self._require_task(run_id, task_id)
+            fix_prompt = self._worker_prompt(task, feedback)
+            fix_log = self._s.root / "logs" / f"ci-fix-{task_id}-a{attempt}.log"
+            wres = await self._worker_runner.run(
+                fix_prompt, model=self._s.role(Role.WORKER).model,
+                cwd=worktree, log_path=fix_log,
+            )
+            self._account(run_id, wres.cost_credits, cost_kind=wres.cost_kind)
+            await self._worktrees.commit_all(worktree, f"task({task_id}): ci fix attempt {attempt}")
+            await self._worktrees.push_branch(branch, self._s.git_remote)
+
+            result = await gh.check_status(pr.number)
+            self._store.add_event(
+                run_id, EventType.CI_CHECK_RESULT, task_id=task_id,
+                detail={"pr": pr.number, "passed": result.all_passed,
+                        "failed_runs": result.failed_run_ids, "attempt": attempt},
+            )
+            if result.all_passed:
+                return
+
+        self._store.add_event(
+            run_id, EventType.CI_RECOVERY_EXHAUSTED, task_id=task_id,
+            detail={"pr": pr.number, "retries": max_retries},
+        )
 
     async def _escalate(self, run_id: str, task_id: str, feedback: str = "") -> None:
         """Re-plan «умного лида»: оркестратор уточняет/дробит задачу вместо тихого BLOCKED."""
@@ -664,6 +872,14 @@ class Engine:
             f"{role}\n{self._gates_brief()}\n=== СПЕКА ЗАДАЧИ ===\n{spec}\n\n"
             f"=== ГЕЙТЫ ПРОЕКТА: {'PASS' if gates_ok else 'FAIL'} ===\n{gate_tail}\n\n"
             f"=== GIT DIFF относительно base ===\n{diff}\n{worktree_block}"
+        )
+
+    def _de_sloppify_prompt(self, task: Task, diff: str) -> str:
+        """v2-028: промпт cleanup-агента — роль + гейты + diff воркера."""
+        role = (self._s.prompts_dir / "de-sloppify.md").read_text(encoding="utf-8")
+        return (
+            f"{role}\n{self._gates_brief()}\n"
+            f"=== GIT DIFF (код воркера, относительно base) ===\n{diff}\n"
         )
 
     def _collect_provides(self, task: Task) -> str:
@@ -836,6 +1052,29 @@ class Engine:
         self._store.transition_task(task, TaskStatus.READY, note="answered, resuming")
         # Продолжаем Run — основной цикл подхватит READY-задачу.
         await self.run(run_id)
+
+    def _strategic_compact_hint(self, wres: AgentResult) -> str:
+        """v2-032: strategic compaction — подсказка `/compact` в feedback следующей
+        попытки, если контекст этой попытки был близок к исчерпанию.
+
+        ECC `strategic-compact`: ручной compact на logical breakpoint дешевле, чем
+        ждать автоматический ~95%-компакт посреди правки файла. Порог выше, чем у
+        `CONTEXT_LOW` (v2-013, ~20%) — компакт предлагается раньше, превентивно.
+        Только подсказка: воркер сам решает, звать `/compact` или нет (не авто).
+        """
+        remaining = wres.context_window_remaining
+        if remaining is None:
+            return ""
+        threshold = int(os.environ.get("HARNESS_COMPACT_THRESHOLD", "60000"))
+        if remaining >= threshold:
+            return ""
+        return (
+            f"\n=== КОНТЕКСТ ЗАКАНЧИВАЕТСЯ (осталось ~{remaining} токенов) ===\n"
+            "Рассмотри `/compact` на логичной точке (между acceptance criteria, "
+            "не посреди правки файла). Сохрани: спеку задачи, SHARED_TASK_NOTES.md, "
+            "уже сделанные шаги и их результат. Снеси: exploration тупиковых "
+            "подходов, неудачные попытки, длинные промежуточные выводы инструментов.\n"
+        )
 
     def _check_context_low(
         self, run_id: str, task_id: str, wres: AgentResult,
@@ -1011,6 +1250,33 @@ class Engine:
                 "Run на паузе",
                 f"run {run_id}: не все задачи готовы. BLOCKED: {', '.join(blocked) or '—'}",
             )
+
+
+def _format_eviction_context(outcome: MergeOutcome) -> str:
+    """v2-029: полный контекст merge-конфликта для feedback следующей попытки.
+
+    Ralphinho "Merge Queue with Eviction": слепой retry (`note="merge conflict"`,
+    пустой feedback) заставляет воркера гадать. Даём конкретику — какие файлы
+    конфликтуют и как выглядит конфликт (diff с conflict-маркерами) — и явно
+    говорим, что base мог уйти вперёд, поэтому чинить нужно поверх свежего base,
+    а не пытаться руками резолвить конфликт старого коммита (его уже нет — worktree
+    следующей попытки создаётся заново от base).
+    """
+    diff = outcome.conflict_diff
+    lines = diff.splitlines()
+    if len(lines) > _CONFLICT_DIFF_MAX_LINES:
+        tail = "\n".join(lines[-_CONFLICT_DIFF_MAX_LINES:])
+        diff = f"... (обрезано, показаны последние {_CONFLICT_DIFF_MAX_LINES} строк)\n{tail}"
+    files = "\n".join(f"- {f}" for f in outcome.conflicting_files) or "(не определены)"
+    return (
+        "=== MERGE CONFLICT (прошлая попытка не влилась в base) ===\n"
+        f"Конфликтующие файлы:\n{files}\n\n"
+        f"--- diff с conflict-маркерами (<<<<<<< / ======= / >>>>>>>) ---\n{diff}\n"
+        "---\n"
+        "base мог измениться с момента прошлой попытки (другие задачи влились "
+        "раньше тебя). Реализуй задачу заново поверх актуального base — не пытайся "
+        "восстановить старый коммит, его больше нет в твоём worktree.\n"
+    )
 
 
 def _parse_verdict(text: str) -> Verdict | None:

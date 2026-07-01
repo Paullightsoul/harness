@@ -88,6 +88,13 @@ class EventType(StrEnum):
     INPUT_REQUESTED = "input_requested"      # движок поставил NEEDS_CLARIFICATION, ждёт /answer
     GIT_PUSH = "git_push"
     GIT_PUSH_FAILED = "git_push_failed"
+    # v2-028: de-sloppify cleanup-pass — отдельный агент чистит diff перед reviewer.
+    DE_SLOPPIFIED = "de_sloppified"
+    # v2-029: merge conflict — eviction context (conflicting files) записан в feedback.
+    MERGE_EVICTED = "merge_evicted"
+    # v2-033: CI failure recovery — результат опроса gh pr checks / исчерпание попыток.
+    CI_CHECK_RESULT = "ci_check_result"
+    CI_RECOVERY_EXHAUSTED = "ci_recovery_exhausted"
     ERROR = "error"
 
 
