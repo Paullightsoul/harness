@@ -587,6 +587,25 @@ def cmd_bot(settings: Settings, args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_stocktake(settings: Settings, args: argparse.Namespace) -> int:
+    """v2-035: аудит prompts/.cursor/skills — размер, свежесть, usage в agent_events."""
+    from harness.skills.stocktake import run_stocktake  # noqa: PLC0415
+
+    store = _store(settings)
+    report = run_stocktake(settings.root, store)
+    output = report.markdown()
+
+    write_path = getattr(args, "write", None)
+    if write_path:
+        target = Path(write_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(output, encoding="utf-8")
+        print(f"отчёт записан в {target}")
+    else:
+        print(output)
+    return 0
+
+
 def cmd_projects(settings: Settings, args: argparse.Namespace) -> int:
     reg = ProjectRegistry(settings.root / "projects.json")
     if args.action == "add":
@@ -690,6 +709,12 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915
     sans.add_argument("--project", default=None)
     sans.add_argument("answers", nargs="*", help="q1=\"value\" q2=\"...\"")
     sans.set_defaults(func=cmd_answer)
+
+    sst = sub.add_parser(
+        "stocktake", help="аудит prompts/.cursor/skills — usage/размер (v2-035)",
+    )
+    sst.add_argument("--write", default=None, help="путь файла для отчёта (иначе stdout)")
+    sst.set_defaults(func=cmd_stocktake)
 
     spj = sub.add_parser("projects", help="реестр проектов")
     spj.add_argument("action", choices=["list", "add"], default="list", nargs="?")

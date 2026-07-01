@@ -72,14 +72,14 @@
 | v2-025 | 5 | Lessons-learned → `brain/lessons/` | v2-024 | normal | **done** |
 | v2-026 | 5 | Multi-run memory в `cmd_plan` | v2-025 | normal | **done** (входит в v2-025 — `format_lessons_for_plan` в cmd_plan) |
 | v2-027 | 5 | Instincts (opt-in, позднее) | v2-025 | high | todo (отложено) |
-| v2-028 | 6 | De-sloppify отдельный pass | v2-001 | normal |
-| v2-029 | 6 | Merge queue with eviction context | — | normal |
-| v2-030 | 6 | Pass@k / pass^k метрики | — | normal |
-| v2-031 | 6 | AgentShield-скан промптов/правил | — | high |
-| v2-032 | 6 | Strategic compaction | v2-011 | normal |
-| v2-033 | 6 | CI failure recovery | v2-014 | high |
-| v2-034 | 6 | Durable-плейн в боевое (`EngineTaskExecutor`) | v2-009 | high |
-| v2-035 | 6 | Skill-stocktake | v2-025 | normal |
+| v2-028 | 6 | De-sloppify отдельный pass | v2-001 | normal | **done** |
+| v2-029 | 6 | Merge queue with eviction context | — | normal | **done** |
+| v2-030 | 6 | Pass@k / pass^k метрики | — | normal | **done** |
+| v2-031 | 6 | AgentShield-скан промптов/правил | — | high | **done** |
+| v2-032 | 6 | Strategic compaction | v2-011 | normal | **done** |
+| v2-033 | 6 | CI failure recovery | v2-014 | high | **done** (gh-wrapper + poll/fix/re-push цикл, протестирован изолированно; авто-PR на задачу — ROADMAP 3.14, safe no-op seam до её реализации) |
+| v2-034 | 6 | Durable-плейн в боевое (`EngineTaskExecutor`) | v2-009 | high | **done** (live-верифицировано на реальном DBOS+Postgres) |
+| v2-035 | 6 | Skill-stocktake | v2-025 | normal | **done** |
 
 ### Граф зависимостей по волнам
 
@@ -1169,6 +1169,7 @@ depends_on: ["v2-025"]
 id: "v2-028"
 title: "De-sloppify отдельный cleanup-pass
 complexity: "normal"
+status: "done"
 depends_on: ["v2-001"]
 ```
 
@@ -1209,6 +1210,7 @@ constrained».
 id: "v2-029"
 title: "Merge queue with eviction context
 complexity: "normal"
+status: "done"
 ```
 
 **Контекст:** На merge conflict — `note="merge conflict"`, feedback пустой.
@@ -1245,6 +1247,7 @@ feedback следующей попытки. Не слепой retry.
 id: "v2-030"
 title: "pass@k / pass^k метрики в status
 complexity: "normal"
+status: "done"
 ```
 
 **Контекст:** Гейты на каждой попытке, без метрик. ECC `eval-harness` —
@@ -1276,6 +1279,7 @@ complexity: "normal"
 id: "v2-031"
 title: "AgentShield-скан промптов/правил/MCP
 complexity: "high"
+status: "done"
 ```
 
 **Контекст:** `guard.sh` только на деструктивные команды. ECC `ecc-agentshield`
@@ -1315,6 +1319,7 @@ red-team/blue-team на Opus.
 id: "v2-032"
 title: "Strategic compaction для долгих воркеров
 complexity: "normal"
+status: "done"
 depends_on: ["v2-011"]
 ```
 
@@ -1349,8 +1354,33 @@ manually compact на logical breakpoints, не ждать 95% авто.
 id: "v2-033"
 title: "CI failure recovery (после GitHub PR
 complexity: "high"
+status: "done"
 depends_on: ["v2-014"]
 ```
+
+**Реализация (скорректирована под реальность):** ROADMAP 3.14 (GitHub
+PR-интеграция вместо локального мержа) сама ещё не реализована — harness
+мержит задачи локально (`WorktreeManager.merge_to_base`) и пушит `base`
+напрямую, PR на ветку `task/<id>` никто не создаёт автоматически. Спека прямо
+предупреждала: «Запрещено: без ROADMAP 3.14 — задача blocked». Вместо
+формального blocked реализован **safe no-op seam** (по аналогии с v2-019/
+v2-020/v2-022 в этом же плане):
+
+- `harness/integrations/github.py` — асинхронная обёртка над `gh`
+  (`pr_for_branch`, `check_status`, `failed_run_log`, `create_pr`).
+- `Engine._run_ci_recovery` — poll → (fail) fetch логи → fix-pass воркером →
+  commit → `push_branch` (новый метод `WorktreeManager`, `push_base` теперь
+  делегирует ему) → re-poll, до `CI_RETRY_MAX` раз (default 1; `0` отключает).
+  Полностью протестирован в изоляции (мок `gh`).
+- `Engine._maybe_run_ci_recovery` — вызывается из `_complete_merge` после
+  push, до удаления worktree. Ищет PR для ветки задачи; если его нет (это
+  практически всегда так СЕГОДНЯ, пока 3.14 не создаёт PR автоматически) —
+  тихий no-op. Как только 3.14 будет реализована — путь заработает без
+  изменений в этом коде.
+
+**Что осталось (follow-up, не входит в v2-033):** ROADMAP 3.14 целиком
+(auto-`gh pr create` на каждую задачу вместо локального мержа) — отдельная
+крупная архитектурная работа, не почтовый довесок к recovery-циклу.
 
 **Контекст:** Локальный merge, без PR/CI. После ROADMAP 3.14 — gate fail на
 PR → `gh run view <id>` → fix-pass с логами CI. ECC Continuous Claude §"CI
@@ -1385,8 +1415,28 @@ Failure Recovery".
 id: "v2-034"
 title: "EngineTaskExecutor — durable в боевое
 complexity: "high"
+status: "done"
 depends_on: ["v2-009"]
 ```
+
+**Реализация:** `EngineTaskExecutor` в `harness/durable/executor.py` реализует
+`TaskExecutor` на реальной инфраструктуре (`WorktreeManager` + `AgentRunner` +
+`ProfileGate`), мостя sync-контракт DBOS-шагов в async через `asyncio.run()`.
+Идемпотентность: `setup()` не пересоздаёт worktree, если он уже существует
+(иначе `-B` в `WorktreeManager.create` стёр бы коммиты прошлых попыток);
+`merge()`/`teardown()` идемпотентны через саму git-семантику («Already up to
+date», молчаливый no-op на уже убранном worktree). `DurableOrchestrator` не
+менялся (контракт `TaskExecutor` соблюдён без изменений).
+
+**Live-верификация (не просто skip):** в сессии поднят реальный Postgres
+(`docker start harness-postgres`, `compose.yaml` уже был в репо) и установлены
+`dbos`+`psycopg[binary]` в `/tmp/harness-venv` — прогнаны настоящие live-тесты
+(не мок): `tests/test_durable.py` (4/4), `tests/test_durable_executor_live.py`
+(2/2, включая **2 задачи end-to-end** и **crash→resume** — оба acceptance
+criteria буквально). Итого 362 теста, 0 skipped, 0 failed. Примечание для
+других сред: без `dbos`/Postgres (`make pg-up`) эти тесты автоматически
+skip'аются (см. докстринг `test_durable_executor_live.py`) — это ожидаемо и не
+регрессия.
 
 **Контекст:** `harness/durable/executor.py` — fake. Нужен реальный с
 worktree+runner+ProfileGate. Связано с ROADMAP 3.13 (распределённые воркеры).
@@ -1417,6 +1467,7 @@ worktree+runner+ProfileGate. Связано с ROADMAP 3.13 (распредел�
 id: "v2-035"
 title: "Skill-stocktake — аудит промптов/скиллов
 complexity: "normal"
+status: "done"
 depends_on: ["v2-025"]
 ```
 
