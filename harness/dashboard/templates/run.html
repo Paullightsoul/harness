@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>harness — {{ run.id }}</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <h1><a href="/">←</a> run {{ run.id }}</h1>
+    <div class="run-meta">
+      <span><b>project:</b> <code>{{ run.project }}</code></span>
+      <span><b>status:</b> <span class="status status-{{ run.status }}">{{ run.status }}</span></span>
+      <span><b>spent:</b> {{ run.spent_credits }}{% if run.budget_credits %} / {{ run.budget_credits }}{% endif %}</span>
+    </div>
+    <div class="goal">{{ run.goal }}</div>
+  </header>
+
+  <section id="tasks">
+    <h2>Tasks</h2>
+    <table>
+      <thead><tr><th>id</th><th>status</th><th>attempts</th><th>complexity</th><th>deps</th><th>title</th></tr></thead>
+      <tbody>
+        {% for t in tasks %}
+        <tr id="task-{{ t.id }}">
+          <td><code>{{ t.id }}</code></td>
+          <td><span class="status status-{{ t.status }}" id="status-{{ t.id }}">{{ t.status }}</span></td>
+          <td>{{ t.attempts }}</td>
+          <td>{{ t.complexity }}</td>
+          <td>{{ t.depends_on | join(",") }}</td>
+          <td>{{ t.title }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <section id="timeline">
+    <h2>Live timeline <span id="ws-status">connecting…</span></h2>
+    <div id="events"></div>
+  </section>
+
+  <script src="/static/dashboard.js"></script>
+  <script>
+    const RUN_ID = "{{ run.id }}";
+    startDashboard(RUN_ID);
+  </script>
+</body>
+</html>

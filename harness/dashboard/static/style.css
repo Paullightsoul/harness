@@ -1,0 +1,32 @@
+body { font-family: -apple-system, "Segoe UI", system-ui, sans-serif; margin: 0; color: #222; background: #fafafa; }
+header { background: #1a1a2e; color: #fff; padding: 12px 20px; }
+header h1 { margin: 0 0 8px; font-size: 18px; }
+header h1 a { color: #fff; text-decoration: none; margin-right: 8px; }
+header a:hover { color: #8be9fd; }
+.run-meta { display: flex; gap: 16px; font-size: 13px; opacity: 0.9; }
+.goal { margin-top: 6px; font-size: 14px; opacity: 0.85; }
+main, section { padding: 16px 20px; max-width: 1200px; margin: 0 auto; }
+h2 { font-size: 16px; margin: 0 0 10px; }
+table { width: 100%; border-collapse: collapse; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
+th, td { padding: 6px 10px; text-align: left; border-bottom: 1px solid #eee; font-size: 13px; }
+th { background: #f0f0f5; }
+code { background: #f4f4f8; padding: 1px 5px; border-radius: 3px; font-size: 12px; }
+.status { padding: 1px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; text-transform: uppercase; }
+.status-done { background: #d4edda; color: #155724; }
+.status-running { background: #cce5ff; color: #004085; }
+.status-ready { background: #fff3cd; color: #856404; }
+.status-blocked, .status-failed { background: #f8d7da; color: #721c24; }
+.status-pending, .status-planning, .status-paused { background: #e2e3e5; color: #383d41; }
+.status-escalate { background: #ffe0b3; color: #8a6100; }
+
+#ws-status { font-size: 11px; color: #888; font-weight: 400; }
+#ws-status.connected { color: #28a745; }
+#ws-status.disconnected { color: #dc3545; }
+
+#events { max-height: 60vh; overflow-y: auto; background: #1e1e2e; color: #cdd6f4; padding: 10px; border-radius: 6px; font-family: "JetBrains Mono", monospace; font-size: 12px; }
+.event-line { padding: 2px 0; border-bottom: 1px solid #313244; }
+.event-line .ev-id { color: #585b70; }
+.event-line .ev-type { color: #89b4fa; font-weight: 600; }
+.event-line .ev-task { color: #f9e2af; }
+.event-line .ev-detail { color: #a6adc8; }
+.event-line.agent .ev-type { color: #cba6f7; }

@@ -62,6 +62,12 @@ class Settings:
         default_factory=lambda: _env("HUMAN_GATE_MERGE", "0") == "1"
     )
 
+    # После успешного мержа в base — git push (чтобы видеть прогресс на remote).
+    push_after_merge: bool = field(
+        default_factory=lambda: _env("HARNESS_PUSH_AFTER_MERGE", "0") == "1"
+    )
+    git_remote: str = field(default_factory=lambda: _env("HARNESS_GIT_REMOTE", "origin"))
+
     # Anti-gaming: зона спеков/acceptance, которую воркеру править запрещено.
     protected_paths: list[str] = field(
         default_factory=lambda: _csv(_env("PROTECTED_PATHS", "tests/spec/**"))
@@ -81,7 +87,7 @@ class Settings:
     roles: dict[Role, RoleConfig] = field(
         default_factory=lambda: {
             Role.ORCHESTRATOR: RoleConfig(
-                model=_env("ORCH_MODEL", "opus-4.8"),
+                model=_env("ORCH_MODEL", "claude-opus-4-8-thinking-high"),
                 runner=RunnerKind(_env("ORCH_RUNNER", "sdk")),
             ),
             Role.WORKER: RoleConfig(

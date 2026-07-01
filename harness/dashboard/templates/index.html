@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>harness — runs</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header><h1>harness runs</h1></header>
+  <main>
+    <table>
+      <thead>
+        <tr><th>id</th><th>project</th><th>goal</th><th>status</th><th>spent</th><th>created</th></tr>
+      </thead>
+      <tbody>
+        {% for r in runs %}
+        <tr>
+          <td><a href="/run/{{ r.id }}">{{ r.id }}</a></td>
+          <td><code>{{ r.project }}</code></td>
+          <td>{{ r.goal }}</td>
+          <td><span class="status status-{{ r.status }}">{{ r.status }}</span></td>
+          <td>{{ r.spent_credits }}{% if r.budget_credits %} / {{ r.budget_credits }}{% endif %}</td>
+          <td>{{ r.created_at }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </main>
+</body>
+</html>

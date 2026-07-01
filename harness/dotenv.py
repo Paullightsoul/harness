@@ -24,7 +24,9 @@ def load_dotenv(path: Path) -> int:
         key, _, value = line.partition("=")
         key = key.strip()
         value = value.strip().strip('"').strip("'")
-        if key and key not in os.environ:
+        # Пустые значения не задаём: пустая строка-заглушка не должна перетирать
+        # реальное значение (ни из окружения, ни заданное ниже в этом же файле).
+        if key and value and key not in os.environ:
             os.environ[key] = value
             loaded += 1
     return loaded

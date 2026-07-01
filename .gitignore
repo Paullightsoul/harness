@@ -8,6 +8,16 @@ logs/
 !.harness/project.toml
 .dbos/
 
+# v2 checkpoint: локальные артефакты от dogfood-прогонов (ZY-2nd-flight и т.д.)
+# Не для GitHub — пересоздаются при следующих run'ах.
+projects.json
+reviews/
+tasks/task-*.md
+!tasks/_TEMPLATE.md
+
+# pip build artefacts
+harness.egg-info/
+
 # секреты / локальная конфигурация
 .env
 

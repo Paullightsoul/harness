@@ -2,7 +2,11 @@
 id: "000"
 title: "Краткое название задачи"
 status: "todo"   # todo | in_progress | done | blocked
-complexity: "normal"   # normal | high — high стартует лестницу моделей сразу с kimi (минуя auto)
+complexity: "small"   # v2-019: trivial | small | medium | large
+                     # trivial = worker→gate, без reviewer (дешёвые задачи)
+                     # small   = +reviewer (по умолчанию)
+                     # medium  = +research+plan+PRD-review+review-fix (follow-up v2-019b)
+                     # large   = +final-review (follow-up v2-019b)
 attempts: 0
 ---
 
@@ -24,6 +28,17 @@ attempts: 0
 - [ ] `pytest tests/test_xxx.py` зелёный
 - [ ] `mypy src/xxx.py` без ошибок
 - [ ] <конкретное наблюдаемое поведение>
+
+# Provides
+<!-- v2-004: ОБЯЗАТЕЛЬНО для задач, от которых зависят другие (см. PLAN.md «зависит от»).
+     Интерфейсы, которые эта задача отдаёт зависимым: сигнатуры функций/классов,
+     пути к созданным файлам, DTO/схемы, имена топиков/ключей. Зависимые воркеры
+     получают этот блок как «ИНТЕРФЕЙСЫ ЗАВИСИМОСТЕЙ» и не видят остальной код.
+     Пример:
+       - `src/auth/jwt.py::issue_token(user_id: UUID) -> str`
+       - `src/auth/jwt.py::verify_token(token: str) -> TokenClaims`
+       - DTO: `TokenClaims(sub: UUID, exp: int)` в `src/schemas/auth.py`
+     Если от задачи никто не зависит — секцию можно оставить пустой. -->
 
 # Запрещено
 <!-- Чего точно нельзя делать в этой задаче. -->

@@ -61,3 +61,15 @@ def test_load_dotenv_does_not_override(tmp_path: Path) -> None:
 
 def test_load_dotenv_missing_file(tmp_path: Path) -> None:
     assert load_dotenv(tmp_path / "nope.env") == 0
+
+
+def test_load_dotenv_empty_value_does_not_shadow(tmp_path: Path) -> None:
+    # пустая заглушка не должна задавать переменную (иначе перетрёт реальное значение)
+    env = tmp_path / ".env"
+    env.write_text("KEY=\nKEY=real\n", encoding="utf-8")
+    os.environ.pop("KEY", None)
+    try:
+        load_dotenv(env)
+        assert os.environ.get("KEY") == "real"
+    finally:
+        os.environ.pop("KEY", None)

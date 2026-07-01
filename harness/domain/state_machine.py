@@ -21,13 +21,13 @@ _T = TaskStatus
 # In-flight статусы: если процесс упал на них, при рестарте задача уходит в
 # RECOVERING -> READY (см. Engine._recover_interrupted). Иначе бы «зависла».
 RECOVERABLE_STATUSES: frozenset[TaskStatus] = frozenset(
-    {_T.RUNNING, _T.GATING, _T.REVIEW, _T.MERGE_QUEUE}
+    {_T.RUNNING, _T.GATING, _T.REVIEW, _T.MERGE_QUEUE, _T.NEEDS_CLARIFICATION}
 )
 
 _ALLOWED: dict[TaskStatus, frozenset[TaskStatus]] = {
     _T.PENDING: frozenset({_T.READY, _T.BLOCKED}),
-    _T.READY: frozenset({_T.RUNNING}),
-    _T.RUNNING: frozenset({_T.GATING, _T.FAILED, _T.RECOVERING}),
+    _T.READY: frozenset({_T.RUNNING, _T.NEEDS_CLARIFICATION}),
+    _T.RUNNING: frozenset({_T.GATING, _T.FAILED, _T.RECOVERING, _T.NEEDS_CLARIFICATION}),
     _T.GATING: frozenset({_T.REVIEW, _T.RECOVERING}),
     _T.REVIEW: frozenset({_T.MERGE_QUEUE, _T.READY, _T.ESCALATE, _T.RECOVERING}),
     _T.MERGE_QUEUE: frozenset({_T.DONE, _T.READY, _T.RECOVERING}),
@@ -35,6 +35,7 @@ _ALLOWED: dict[TaskStatus, frozenset[TaskStatus]] = {
     _T.BLOCKED: frozenset({_T.READY}),
     _T.FAILED: frozenset({_T.READY, _T.BLOCKED}),
     _T.RECOVERING: frozenset({_T.READY}),
+    _T.NEEDS_CLARIFICATION: frozenset({_T.READY, _T.BLOCKED, _T.RECOVERING}),  # v2-015
     _T.DONE: frozenset(),
 }
 

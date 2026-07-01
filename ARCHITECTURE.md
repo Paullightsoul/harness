@@ -111,7 +111,7 @@ language-overlay (`10-lang-python.md`, `10-lang-typescript.md`). Формат TO
 
 | Переменная | По умолчанию | Назначение |
 |---|---|---|
-| `ORCH_MODEL` / `ORCH_RUNNER` | `opus-4.8` / `sdk` | планировщик |
+| `ORCH_MODEL` / `ORCH_RUNNER` | `claude-opus-4-8-thinking-high` / `sdk` | планировщик |
 | `WORKER_MODEL` / `WORKER_RUNNER` | `auto` / `cli` | исполнитель (база лестницы) |
 | `REVIEWER_MODEL` / `REVIEWER_RUNNER` | `glm-5.2-high` / `sdk` | ревьюер |
 | `MAX_ATTEMPTS` | `3` | попыток на задачу |

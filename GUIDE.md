@@ -123,7 +123,7 @@ attempt 1..ESCALATE_AFTER → auto      (по умолчанию 2 попытк�
 
 - **Повышенная сложность:** пометь задачу `complexity: high` во frontmatter
   `tasks/task-*.md` — она стартует сразу с `kimi` (auto пропускается), потом `glm`.
-- Ревьюер по умолчанию `glm-5.2-high`. Планировщик — `opus-4.8` (сильный на декомпозиции).
+- Ревьюер по умолчанию `glm-5.2-high`. Планировщик — `claude-opus-4-8-thinking-high` (сильный на декомпозиции).
 - `MAX_ATTEMPTS` по умолчанию адаптивный: `ESCALATE_AFTER + число ступеней` (= 4), чтобы
   лестница проходилась целиком.
 
@@ -209,7 +209,7 @@ harness run --project api                  # воркеры/гейты идут 
 | `HARNESS_ROOT` | `.` | дом harness (prompts, tasks, state.db, logs) |
 | `CURSOR_API_KEY` | — | ключ для SDK-ролей (оркестратор/ревьюер) |
 | `CURSOR_FLAGS` | — | доп. флаги `cursor-agent` |
-| `ORCH_MODEL` / `ORCH_RUNNER` | `opus-4.8` / `sdk` | планировщик |
+| `ORCH_MODEL` / `ORCH_RUNNER` | `claude-opus-4-8-thinking-high` / `sdk` | планировщик |
 | `WORKER_MODEL` / `WORKER_RUNNER` | `auto` / `cli` | исполнитель (база лестницы) |
 | `REVIEWER_MODEL` / `REVIEWER_RUNNER` | `glm-5.2-high` / `sdk` | ревьюер |
 | `ESCALATE_AFTER` | `2` | попыток на стартовой ступени до подъёма |

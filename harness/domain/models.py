@@ -23,6 +23,9 @@ class Run:
     base_branch: str = "main"
     budget_credits: float | None = None
     spent_credits: float = 0.0
+    # v2-005: хеш (project, goal, base_branch) для idempotent ingest — повторный
+    # ingest с тем же контекстом возвращает существующий не-терминальный Run.
+    goal_hash: str = ""
     created_at: str = field(default_factory=_now)
     updated_at: str = field(default_factory=_now)
 
@@ -40,6 +43,7 @@ class Task:
     provides: str = ""  # интерфейс, который задача отдаёт зависимым (инжектится им в контекст)
     complexity: str = "normal"  # "normal" | "high" — high стартует лестницу сразу с kimi
     attempts: int = 0
+    completion_signals: int = 0  # v2-021: consecutive HARNESS_DONE (CHANGES сбрасывает)
     branch: str = ""
     worktree_path: str = ""
     note: str = ""      # причина blocked / эскалации
@@ -62,6 +66,10 @@ class Attempt:
     cost_credits: float = 0.0
     started_at: str = field(default_factory=_now)
     finished_at: str = ""
+    # v2-003: cost-учёт и token-usage (могут быть 0 для старых run'ов до миграции).
+    cost_kind: str = "estimate"
+    tokens_in: int = 0
+    tokens_out: int = 0
 
 
 @dataclass
@@ -89,3 +97,24 @@ class Event:
 
     def detail_json(self) -> str:
         return json.dumps(self.detail, ensure_ascii=False)
+
+
+@dataclass
+class AgentEvent:
+    """v2-009: одно событие из транскрипта агента (tool_call / assistant_msg / ...).
+
+    Собирается из `run.messages()` (Python SDK) после прогона и bulk-insert'ся в
+    `agent_events` таблицу + пишется в `logs/worker-<task>-a<N>.ndjson` (по строке
+    на событие). Real-time стриминг требует async-bridge — follow-up.
+
+    `id` — автоинкремент из store (0 для событий не из БД, например в AgentResult).
+    """
+
+    kind: str           # AgentEventKind
+    payload: dict[str, Any] = field(default_factory=dict)
+    at: str = field(default_factory=_now)
+    id: int = 0              # store row id (для tail курсора)
+    task_id: str = ""        # заполняется store при чтении (для фильтра --task)
+
+    def payload_json(self) -> str:
+        return json.dumps(self.payload, ensure_ascii=False)

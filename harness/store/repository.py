@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from harness.domain.enums import EventType, TaskStatus
-from harness.domain.models import Event, Review, Run, Task
+from harness.domain.models import AgentEvent, Attempt, Event, Review, Run, Task
 from harness.domain.state_machine import require_transition
 from harness.store.db import connect, init_db
 
@@ -41,9 +41,10 @@ class Store:
     def create_run(self, run: Run) -> None:
         self._conn.execute(
             "INSERT INTO runs(id,project,goal,status,base_branch,budget_credits,"
-            "spent_credits,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
+            "spent_credits,goal_hash,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
             (run.id, run.project, run.goal, run.status, run.base_branch,
-             run.budget_credits, run.spent_credits, run.created_at, run.updated_at),
+             run.budget_credits, run.spent_credits, run.goal_hash,
+             run.created_at, run.updated_at),
         )
         self.add_event(run.id, EventType.RUN_CREATED, detail={"goal": run.goal})
 
@@ -51,12 +52,27 @@ class Store:
         row = self._conn.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()
         return _row_to_run(row) if row else None
 
+    def find_active_run_by_goal_hash(self, goal_hash: str) -> Run | None:
+        """v2-005: найти существующий не-терминальный Run с тем же goal_hash.
+
+        Терминальные ('done', 'failed') пропускаем — пользователь явно перезапускает.
+        Возвращает первый попавшийся активный (planning/running/paused) или None.
+        """
+        if not goal_hash:
+            return None
+        row = self._conn.execute(
+            "SELECT * FROM runs WHERE goal_hash=? AND status NOT IN ('done','failed') "
+            "ORDER BY created_at DESC LIMIT 1",
+            (goal_hash,),
+        ).fetchone()
+        return _row_to_run(row) if row else None
+
     def set_run_status(self, run_id: str, status: str) -> None:
         self._conn.execute(
             "UPDATE runs SET status=?, updated_at=? WHERE id=?", (status, _now(), run_id)
         )
 
-    def add_spend(self, run_id: str, credits: float) -> float:
+    def add_spend(self, run_id: str, credits: float, *, cost_kind: str = "estimate") -> float:
         with self._lock:
             self._conn.execute(
                 "UPDATE runs SET spent_credits = spent_credits + ?, updated_at=? WHERE id=?",
@@ -67,7 +83,8 @@ class Store:
             ).fetchone()
             spent = float(row["spent_credits"]) if row else 0.0
             self.add_event(
-                run_id, EventType.BUDGET_SPENT, detail={"credits": credits, "total": spent}
+                run_id, EventType.BUDGET_SPENT,
+                detail={"credits": credits, "total": spent, "cost_kind": cost_kind},
             )
             return spent
 
@@ -75,15 +92,17 @@ class Store:
     def upsert_task(self, task: Task) -> None:
         self._conn.execute(
             "INSERT INTO tasks(id,run_id,title,spec_path,status,depends_on,provides,"
-            "complexity,attempts,branch,worktree_path,note,created_at,updated_at) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+            "complexity,attempts,completion_signals,branch,worktree_path,note,"
+            "created_at,updated_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
             "ON CONFLICT(run_id,id) DO UPDATE SET title=excluded.title,"
             "spec_path=excluded.spec_path,depends_on=excluded.depends_on,"
             "provides=excluded.provides,complexity=excluded.complexity,"
             "updated_at=excluded.updated_at",
             (task.id, task.run_id, task.title, task.spec_path, task.status,
              json.dumps(task.depends_on), task.provides, task.complexity, task.attempts,
-             task.branch, task.worktree_path, task.note, task.created_at, task.updated_at),
+             task.completion_signals, task.branch, task.worktree_path, task.note,
+             task.created_at, task.updated_at),
         )
 
     def get_task(self, run_id: str, task_id: str) -> Task | None:
@@ -119,10 +138,10 @@ class Store:
 
     def update_task_fields(self, task: Task) -> None:
         self._conn.execute(
-            "UPDATE tasks SET attempts=?, branch=?, worktree_path=?, provides=?, "
-            "updated_at=? WHERE run_id=? AND id=?",
-            (task.attempts, task.branch, task.worktree_path, task.provides,
-             _now(), task.run_id, task.id),
+            "UPDATE tasks SET attempts=?, completion_signals=?, branch=?, "
+            "worktree_path=?, provides=?, updated_at=? WHERE run_id=? AND id=?",
+            (task.attempts, task.completion_signals, task.branch, task.worktree_path,
+             task.provides, _now(), task.run_id, task.id),
         )
 
     # ── Attempts / reviews ────────────────────────────────────────────────────
@@ -148,12 +167,15 @@ class Store:
         gates_passed: bool | None,
         verdict: str | None,
         cost_credits: float,
+        cost_kind: str = "estimate",
+        tokens_in: int = 0,
+        tokens_out: int = 0,
     ) -> None:
         self._conn.execute(
             "UPDATE attempts SET worker_output=?, gates_passed=?, verdict=?, "
-            "cost_credits=?, finished_at=? WHERE id=?",
+            "cost_credits=?, cost_kind=?, tokens_in=?, tokens_out=?, finished_at=? WHERE id=?",
             (worker_output, _bool_to_int(gates_passed), verdict, cost_credits,
-             _now(), attempt_id),
+             cost_kind, tokens_in, tokens_out, _now(), attempt_id),
         )
         self.add_event(
             run_id, EventType.ATTEMPT_FINISHED, task_id=task_id,
@@ -167,6 +189,28 @@ class Store:
             (review.attempt_id, review.task_id, review.verdict, review.report,
              review.feedback, review.created_at),
         )
+
+    # ── Attempts (read) ───────────────────────────────────────────────────────
+    def last_attempt(self, run_id: str, task_id: str) -> Attempt | None:
+        """v2-011: последняя завершённая попытка задачи — для token-usage в status.
+
+        Берёт запись с максимальным `number` (не id, т.к. id — autoincrement через
+        все задачи run'а). Возвращает None если попыток не было.
+        """
+        row = self._conn.execute(
+            "SELECT * FROM attempts WHERE run_id=? AND task_id=? "
+            "ORDER BY number DESC LIMIT 1",
+            (run_id, task_id),
+        ).fetchone()
+        return _row_to_attempt(row) if row else None
+
+    def list_attempts(self, run_id: str, task_id: str) -> list[Attempt]:
+        """Все попытки задачи, по возрастанию number."""
+        rows = self._conn.execute(
+            "SELECT * FROM attempts WHERE run_id=? AND task_id=? ORDER BY number",
+            (run_id, task_id),
+        ).fetchall()
+        return [_row_to_attempt(r) for r in rows]
 
     # ── Events ────────────────────────────────────────────────────────────────
     def add_event(
@@ -188,13 +232,50 @@ class Store:
         ).fetchall()
         return [_row_to_event(r) for r in rows]
 
+    # ── Agent events (v2-009: транскрипт) ─────────────────────────────────────
+    def add_agent_events(
+        self, run_id: str, task_id: str, attempt: int, events: list[AgentEvent],
+    ) -> None:
+        """Bulk-insert агент-событий после прогона (пост-прогонный транскрипт)."""
+        if not events:
+            return
+        rows = [
+            (run_id, task_id, attempt, e.kind, e.payload_json(), e.at) for e in events
+        ]
+        with self._lock:
+            self._conn.executemany(
+                "INSERT INTO agent_events(run_id,task_id,attempt,kind,payload,at) "
+                "VALUES(?,?,?,?,?,?)",
+                rows,
+            )
+
+    def list_agent_events(
+        self, run_id: str, task_id: str | None = None, after_id: int = 0,
+    ) -> list[AgentEvent]:
+        """Транскрипт по задаче (или всему run'у), по возрастанию id."""
+        if task_id is not None:
+            rows = self._conn.execute(
+                "SELECT * FROM agent_events WHERE run_id=? AND task_id=? AND id>? "
+                "ORDER BY id",
+                (run_id, task_id, after_id),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT * FROM agent_events WHERE run_id=? AND id>? ORDER BY id",
+                (run_id, after_id),
+            ).fetchall()
+        return [_row_to_agent_event(r) for r in rows]
+
 
 # ── мапперы строк ─────────────────────────────────────────────────────────────
 def _row_to_run(r: sqlite3.Row) -> Run:
+    cols = r.keys()
+    goal_hash = r["goal_hash"] if "goal_hash" in cols else ""
     return Run(
         id=r["id"], project=r["project"], goal=r["goal"], status=r["status"],
         base_branch=r["base_branch"], budget_credits=r["budget_credits"],
-        spent_credits=r["spent_credits"], created_at=r["created_at"], updated_at=r["updated_at"],
+        spent_credits=r["spent_credits"], goal_hash=goal_hash,
+        created_at=r["created_at"], updated_at=r["updated_at"],
     )
 
 
@@ -204,7 +285,9 @@ def _row_to_task(r: sqlite3.Row) -> Task:
         id=r["id"], run_id=r["run_id"], title=r["title"], spec_path=r["spec_path"],
         status=r["status"], depends_on=json.loads(r["depends_on"]), provides=r["provides"],
         complexity=r["complexity"] if "complexity" in cols else "normal",
-        attempts=r["attempts"], branch=r["branch"], worktree_path=r["worktree_path"],
+        attempts=r["attempts"],
+        completion_signals=r["completion_signals"] if "completion_signals" in cols else 0,
+        branch=r["branch"], worktree_path=r["worktree_path"],
         note=r["note"], created_at=r["created_at"], updated_at=r["updated_at"],
     )
 
@@ -213,6 +296,39 @@ def _row_to_event(r: sqlite3.Row) -> Event:
     return Event(
         id=r["id"], run_id=r["run_id"], type=r["type"], task_id=r["task_id"],
         detail=json.loads(r["detail"]), at=r["at"],
+    )
+
+
+def _row_to_attempt(r: sqlite3.Row) -> Attempt:
+    """Маппер attempts-строки. Новые колонки (cost_kind, tokens) могут
+    отсутствовать в старых БД до миграции — getattr-безопасно."""
+    cols = r.keys()
+    return Attempt(
+        id=r["id"], task_id=r["task_id"], run_id=r["run_id"], number=r["number"],
+        model=r["model"], worker_output=r["worker_output"],
+        gates_passed=_int_to_bool(r["gates_passed"]) if "gates_passed" in cols else None,
+        verdict=r["verdict"], cost_credits=r["cost_credits"],
+        started_at=r["started_at"],
+        finished_at=r["finished_at"] if "finished_at" in cols else "",
+        cost_kind=r["cost_kind"] if "cost_kind" in cols else "estimate",
+        tokens_in=r["tokens_in"] if "tokens_in" in cols else 0,
+        tokens_out=r["tokens_out"] if "tokens_out" in cols else 0,
+    )
+
+
+def _int_to_bool(v: int | None) -> bool | None:
+    if v is None:
+        return None
+    return bool(v)
+
+
+def _row_to_agent_event(r: sqlite3.Row) -> AgentEvent:
+    return AgentEvent(
+        kind=r["kind"],
+        payload=json.loads(r["payload"]) if r["payload"] else {},
+        at=r["at"],
+        id=r["id"],
+        task_id=r["task_id"],
     )
 
 

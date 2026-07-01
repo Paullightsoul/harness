@@ -20,6 +20,12 @@ class MergeOutcome:
     output: str
 
 
+@dataclass
+class PushOutcome:
+    pushed: bool
+    output: str
+
+
 class _Git:
     def __init__(self, repo: Path) -> None:
         self._repo = repo
@@ -42,6 +48,10 @@ class WorktreeManager:
         self._dir = worktrees_dir
         self._base = base_branch
         self._merge_lock = asyncio.Lock()  # сериализует мержи в base
+
+    @property
+    def base_branch(self) -> str:
+        return self._base
 
     async def create(self, task_id: str) -> tuple[Path, str]:
         """Готовит worktree и ветку task/<id> от base. Возвращает (путь, ветка)."""
@@ -79,6 +89,11 @@ class WorktreeManager:
                 await self._git.run("merge", "--abort")
                 return MergeOutcome(merged=False, conflict=True, output=out)
             return MergeOutcome(merged=True, conflict=False, output=out)
+
+    async def push_base(self, remote: str = "origin") -> PushOutcome:
+        """Push base branch to remote so progress is visible on GitHub."""
+        code, out = await self._git.run("push", remote, self._base)
+        return PushOutcome(pushed=code == 0, output=out)
 
     async def remove(self, task_id: str) -> None:
         path = self._dir / f"task-{task_id}"

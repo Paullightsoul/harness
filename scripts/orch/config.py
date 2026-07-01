@@ -36,7 +36,7 @@ def _parse_type_limits(raw: str) -> Dict[str, int]:
 class Config:
     root: Path
 
-    orch_model: str = "opus-4.8"
+    orch_model: str = "claude-opus-4-8-thinking-high"
     worker_model: str = "auto"
     reviewer_model: str = "glm-5.2-high"
 
@@ -56,7 +56,7 @@ class Config:
     def from_env(cls, root: Path) -> "Config":
         return cls(
             root=root,
-            orch_model=os.environ.get("ORCH_MODEL", "opus-4.8"),
+            orch_model=os.environ.get("ORCH_MODEL", "claude-opus-4-8-thinking-high"),
             worker_model=os.environ.get("WORKER_MODEL", "auto"),
             reviewer_model=os.environ.get("REVIEWER_MODEL", "glm-5.2-high"),
             max_workers=int(os.environ.get("MAX_WORKERS", "5")),

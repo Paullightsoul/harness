@@ -1,0 +1,42 @@
+---
+description: Используй graphify для архитектурных вопросов перед написанием кода
+globs:
+  - "**/*.py"
+  - "**/*.ts"
+alwaysApply: false
+---
+
+# graphify — для архитектурных вопросов
+
+Перед написанием нового кода или изменением архитектуры — используй `graphify query`
+вместо слепого `rg`, чтобы найти связанные модули, зависимости, места определения
+символов. Граф уже построен для большинства проектов в `/home/projects/`.
+
+## Когда graphify, когда rg
+
+- **graphify** — архитектурные вопросы: «где определено X?», «что вызывает Y?»,
+  «как A зависит от B?», «найти все реализации интерфейса Z».
+- **rg/Grep** — текстовые поиска: имена функций, строковые литералы, TODO, и т.д.
+
+## Команды
+
+```bash
+# Вопрос по графу конкретного проекта
+graphify query "<вопрос>" --graph /home/projects/<service>/graphify-out/graph.json --budget 4000
+
+# Кратчайший путь зависимости
+graphify path "A" "B" --graph <path>
+
+# Объяснение конкретного символа
+graphify explain "<symbol>" --graph <path>
+```
+
+## Если граф не построен
+
+Fallback на `rg`/`Grep`/`Glob` — это нормально. Граф — ускоритель, не блокер.
+Билд: `/home/scripts/build-graph.sh --fast --only <name>` (но не из run-loop).
+
+## Источник
+
+- Workspace rule `/home/.cursor/rules/graphify.mdc`
+- AI_MEMORY.md §10 «Graphify (knowledge graph)»

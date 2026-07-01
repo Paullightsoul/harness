@@ -55,7 +55,7 @@ chmod +x scripts/*.sh scripts/hooks/*.sh
 
 | Переменная       | По умолчанию | Назначение                                   |
 |------------------|--------------|----------------------------------------------|
-| `ORCH_MODEL`     | `opus-4.8`   | модель планировщика (жжёт пул Third-Party)   |
+| `ORCH_MODEL`     | `claude-opus-4-8-thinking-high`   | модель планировщика (жжёт пул Third-Party)   |
 | `WORKER_MODEL`   | `auto`       | модель воркеров (в рамках подписки)          |
 | `REVIEWER_MODEL` | `glm-5.2-high` | модель ревьюера (поставь `auto` для экономии)|
 | `ESCALATION_MODELS` | `kimi-k2.5,glm-5.2-high` | ступени эскалации воркера при провалах |
@@ -96,8 +96,8 @@ Makefile         make check = ruff + mypy + pytest
 
 ## Заметки
 
-- Имена моделей (`opus-4.8`, `kimi-k2.5`, `glm-5.2-high`) сверь с `cursor-agent --help` / docs —
-  при необходимости поправь дефолты в `scripts/lib.sh`.
+- Имена моделей (`claude-opus-4-8-thinking-high`, `kimi-k2.5`, `glm-5.2-high`) сверены с `cursor-agent models` —
+  при необходимости поправь дефолты в `harness/config.py`.
 - Схема `.cursor/hooks.json` может отличаться между версиями Cursor; реальное
   принуждение качества обеспечивает `make check`, хук — лишь доп. страховка.
 ```
