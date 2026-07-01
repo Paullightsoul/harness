@@ -428,11 +428,46 @@ def cmd_init(settings: Settings, args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_scan(settings: Settings, args: argparse.Namespace) -> int:
+    """v2-031: AgentShield-скан — статические правила + опционально adversarial (--opus)."""
+    from harness.security.scanner import scan_directory  # noqa: PLC0415
+
+    report = scan_directory(settings.root)
+    output = report.markdown()
+
+    if getattr(args, "opus", False):
+        from harness.security.red_team import run_red_team  # noqa: PLC0415
+
+        role = settings.role(Role.ORCHESTRATOR)
+        runner = build_runner(role.runner)
+        rt_report = asyncio.run(run_red_team(settings.root, runner, model=role.model))
+        output += "\n\n" + rt_report.markdown()
+
+    write_path = getattr(args, "write", None)
+    if write_path:
+        target = Path(write_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(output, encoding="utf-8")
+        print(f"отчёт записан в {target}")
+    else:
+        print(output)
+    return 2 if report.critical else 0
+
+
 def cmd_doctor(settings: Settings, args: argparse.Namespace) -> int:
     """Проверка готовности окружения к работе."""
     project = _resolve_project(settings, getattr(args, "project", None))
     repo = _repo_root(settings, project)
     rows: list[tuple[str, bool, str]] = []
+
+    # v2-031: AgentShield static scan промптов/правил harness (не целевого проекта).
+    from harness.security.scanner import scan_directory  # noqa: PLC0415
+    scan_report = scan_directory(settings.root)
+    rows.append((
+        "security scan (prompts/.cursor)", not scan_report.critical,
+        f"grade {scan_report.grade}" if not scan_report.critical
+        else f"{len(scan_report.critical)} critical — harness scan для деталей",
+    ))
 
     rows.append(("python>=3.11", sys.version_info >= (3, 11), sys.version.split()[0]))
     rows.append(("git", shutil.which("git") is not None, shutil.which("git") or "—"))
@@ -470,6 +505,12 @@ def cmd_doctor(settings: Settings, args: argparse.Namespace) -> int:
             all_ok = False
         print(f"  {mark} {name:<28} {detail}")
     print("\n" + ("Готово к работе." if all_ok else "Есть проблемы — поправь ❌ выше."))
+    if scan_report.critical:
+        print(
+            f"\n❌ КРИТИЧНО: {len(scan_report.critical)} security finding(s) в "
+            "prompts/.cursor — смотри `harness scan`", file=sys.stderr,
+        )
+        return 2
     return 0 if all_ok else 1
 
 
@@ -623,6 +664,14 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915
     sd = sub.add_parser("doctor", help="проверка готовности окружения")
     sd.add_argument("--project", default=None)
     sd.set_defaults(func=cmd_doctor)
+
+    sscan = sub.add_parser(
+        "scan", help="AgentShield-скан prompts/.cursor на injection/secret-leak (v2-031)",
+    )
+    sscan.add_argument("--opus", action="store_true",
+                       help="+ adversarial red-team/blue-team на Opus (дорого, opt-in)")
+    sscan.add_argument("--write", default=None, help="путь файла для отчёта (иначе stdout)")
+    sscan.set_defaults(func=cmd_scan)
 
     sb = sub.add_parser("bot", help="запустить Telegram-бота (команды /status /approve /runs)")
     sb.set_defaults(func=cmd_bot)
