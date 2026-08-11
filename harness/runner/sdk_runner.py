@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -48,7 +49,13 @@ class SdkRunner:
         model: str,
         cwd: Path,
         log_path: Path | None = None,
+        progress_callback: Callable[[str], None] | None = None,
     ) -> AgentResult:
+        """Запустить агента через SDK.
+
+        Args:
+            progress_callback: функция для heartbeat-уведомлений ("started", "thinking", "done")
+        """
         sdk = self._load_sdk()
         Agent = sdk.Agent
         AgentOptions = sdk.AgentOptions
@@ -56,6 +63,8 @@ class SdkRunner:
 
         def _execute() -> tuple[Any, Any, list[AgentEvent]]:
             # cursor-sdk 0.1.x: Agent.create — sync context manager, не coroutine.
+            if progress_callback:
+                progress_callback("started")
             with Agent.create(
                 AgentOptions(
                     api_key=self._api_key,
@@ -68,13 +77,21 @@ class SdkRunner:
                 # Если метод отсутствует (старый SDK) — fallback на пустой список.
                 events: list[AgentEvent] = []
                 messages_iter = getattr(run, "messages", None)
+                msg_count = 0
                 if callable(messages_iter):
                     try:
                         for msg in messages_iter():
+                            msg_count += 1
+                            if progress_callback and msg_count % 5 == 0:
+                                progress_callback(f"thinking:{msg_count}")
                             events.extend(_agent_events_from_message(msg))
                     except Exception:  # noqa: BLE001 (транскрипт не должен валить прогон)
                         pass
+                if progress_callback:
+                    progress_callback("waiting")
                 result = run.wait()
+                if progress_callback:
+                    progress_callback("done")
                 return agent, result, events
 
         try:

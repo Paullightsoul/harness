@@ -62,11 +62,22 @@ def create_app(store: Store) -> FastAPI:
         if run is None:
             return JSONResponse({"error": "run not found"}, status_code=404)
         tasks = store.list_tasks(run_id)
+        from harness.policy.phase import derive_phase  # noqa: PLC0415
+
+        recent = [e.type for e in store.list_events(run_id)[-40:]]
+        phase = derive_phase(
+            run_status=run.status,
+            task_statuses=[t.status for t in tasks],
+            recent_event_types=recent,
+        )
         return JSONResponse({
             "run": {
                 "id": run.id, "project": run.project, "goal": run.goal,
                 "status": run.status, "spent_credits": run.spent_credits,
                 "budget_credits": run.budget_credits,
+                "phase": phase.ux_phase.value,
+                "stall_reason": phase.stall_reason,
+                "loop_phase": phase.loop_phase.value if phase.loop_phase else None,
             },
             "tasks": [
                 {
@@ -146,19 +157,12 @@ def create_app(store: Store) -> FastAPI:
 
 
 def _list_runs(store: Store) -> list[dict[str, Any]]:
-    """Все run'ы из store — простым SELECT (метода list_runs нет, делаем напрямую).
-
-    Сортировка: последние сверху.
-    """
-    rows = store._conn.execute(  # noqa: SLF001 (дашборд — служебный доступ)
-        "SELECT id, project, goal, status, spent_credits, budget_credits, "
-        "created_at FROM runs ORDER BY created_at DESC LIMIT 100"
-    ).fetchall()
+    """Все run'ы из store, последние сверху."""
     return [
         {
-            "id": r["id"], "project": r["project"], "goal": r["goal"],
-            "status": r["status"], "spent_credits": r["spent_credits"],
-            "budget_credits": r["budget_credits"], "created_at": r["created_at"],
+            "id": run.id, "project": run.project, "goal": run.goal,
+            "status": run.status, "spent_credits": run.spent_credits,
+            "budget_credits": run.budget_credits, "created_at": run.created_at,
         }
-        for r in rows
+        for run in store.list_runs(limit=100)
     ]

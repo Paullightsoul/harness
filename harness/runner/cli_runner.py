@@ -17,6 +17,7 @@ import contextlib
 import os
 import shlex
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 
 from harness.runner.base import AgentResult
@@ -83,6 +84,19 @@ def _keep_prompts() -> bool:
     return os.environ.get("HARNESS_KEEP_PROMPTS", "0") == "1"
 
 
+def _max_prompt_bytes() -> int:
+    """Безопасный потолок под argv/`sh -c` (оба пути упираются в один и тот же
+    exec()-лимит ОС). Инцидент: worker закоммитил .venv в diff воркера, de-sloppify
+    подставил его в prompt → 28MB argv → `[Errno 7] Argument list too long`, ран упал.
+    Берём ARG_MAX с запасом на env/argv0/остальные флаги, не весь лимит целиком.
+    """
+    try:
+        arg_max = os.sysconf("SC_ARG_MAX")
+    except (ValueError, OSError):
+        arg_max = 2 * 1024 * 1024
+    return max(arg_max // 4, 64 * 1024)
+
+
 class CliRunner:
     def __init__(self, extra_flags: str = "") -> None:
         self._extra_flags = shlex.split(extra_flags) if extra_flags else []
@@ -94,10 +108,34 @@ class CliRunner:
         model: str,
         cwd: Path,
         log_path: Path | None = None,
+        progress_callback: Callable[[str], None] | None = None,
     ) -> AgentResult:
+        # CLI runner не поддерживает streaming/heartbeat — тихий no-op.
+        if progress_callback:
+            progress_callback("started")
         # v2-007: всегда сохраняем промпт в файл для аудита — логи раньше не давали
         # увидеть, что именно послали агенту.
         prompt_file = _save_prompt(prompt, cwd, log_path)
+
+        prompt_bytes = len(prompt.encode("utf-8"))
+        limit = _max_prompt_bytes()
+        if prompt_bytes > limit:
+            # Инцидент: раздутый diff (например, случайно закоммиченный .venv)
+            # приводил к `[Errno 7] Argument list too long` и падению всего ран'а.
+            # Явная ошибка вместо OS-level crash — движок должен уметь это
+            # обработать (например, пометить задачу failed с понятной причиной).
+            if progress_callback:
+                progress_callback("done")
+            location = f" (сохранён в {prompt_file})" if prompt_file else ""
+            return AgentResult(
+                ok=False,
+                text="",
+                error=(
+                    f"prompt слишком большой для exec(): {prompt_bytes} байт > "
+                    f"лимит {limit} байт{location}. Обычно причина — раздутый "
+                    f"git diff (например, случайно закоммиченный .venv/node_modules)."
+                ),
+            )
 
         extra = list(self._extra_flags)
         try:
@@ -154,6 +192,8 @@ class CliRunner:
 
         # CLI не отдаёт стоимость машиночитаемо — используем эвристическую оценку.
         estimated_cost = _estimate_cost(model)
+        if progress_callback:
+            progress_callback("done")
         return AgentResult(
             ok=proc.returncode == 0, text=text, cost_credits=estimated_cost,
             cost_kind="estimated",

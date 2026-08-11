@@ -99,9 +99,11 @@ class EngineTaskExecutor:
         self._store = store
         self._repo_root = repo_root or settings.root
         profile = load_profile(self._repo_root)
-        self._worker_runner = worker_runner or build_runner(settings.role(Role.WORKER).runner)
+        self._worker_runner = worker_runner or build_runner(
+            settings.role(Role.WORKER).runner, role=Role.WORKER,
+        )
         self._reviewer_runner = reviewer_runner or build_runner(
-            settings.role(Role.REVIEWER).runner
+            settings.role(Role.REVIEWER).runner, role=Role.REVIEWER,
         )
         self._gate = gate or ProfileGate(profile, build_sandbox(settings.sandbox_kind, profile))
         self._gates_brief = _gates_brief_text(profile.language, profile.gate_commands)

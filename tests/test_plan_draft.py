@@ -86,6 +86,8 @@ def test_run_with_approve_plan_transitions_to_planning(
     calls: list[str] = []
 
     def _patched_run(coro):
+        coro.close()
+
         async def _capture():
             # Запишем что Run был переведён в planning до запуска
             r = store.get_run(run_id)

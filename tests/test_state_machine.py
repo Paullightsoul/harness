@@ -33,3 +33,11 @@ def test_invalid_transition_raises() -> None:
 def test_done_is_terminal() -> None:
     assert is_terminal(TaskStatus.DONE)
     assert not is_terminal(TaskStatus.BLOCKED)
+
+
+def test_post_merge_fix_and_abort_paths() -> None:
+    assert can_transition(TaskStatus.MERGE_QUEUE, TaskStatus.POST_MERGE_FIX)
+    assert can_transition(TaskStatus.POST_MERGE_FIX, TaskStatus.READY)
+    assert can_transition(TaskStatus.GATING, TaskStatus.READY)
+    assert can_transition(TaskStatus.RUNNING, TaskStatus.BLOCKED)
+    assert can_transition(TaskStatus.READY, TaskStatus.FAILED)

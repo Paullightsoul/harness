@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "harness"
-version = "0.1.0"
-description = "Детерминированный control plane для оркестрации агентов Cursor"
+version = "4.0.0.dev0"
+description = "Harness V4 (clone-and-upgrade) — TaskTool-first control plane; honesty + multi-tenant design"
 requires-python = ">=3.11"
 dependencies = []
 
@@ -17,7 +17,16 @@ sdk = ["cursor-sdk"]
 durable = ["dbos"]
 # Telegram-нотификации и бот (httpx.AsyncClient). Без него — нотификации в консоль.
 telegram = ["httpx"]
-dev = ["ruff", "mypy", "pytest"]
+dev = [
+    "ruff",
+    "mypy",
+    "pytest",
+    "pytest-asyncio",
+    "pytest-cov",
+    "fastapi",
+    "httpx",
+    "jinja2",
+]
 
 [project.scripts]
 harness = "harness.interface.cli:main"
@@ -45,6 +54,10 @@ ignore_missing_imports = true
 module = "harness.durable.*"
 disallow_untyped_decorators = false
 disallow_subclassing_any = false
+
+[[tool.mypy.overrides]]
+module = "harness.dashboard.*"
+disallow_untyped_decorators = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

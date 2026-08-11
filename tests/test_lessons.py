@@ -62,13 +62,21 @@ def test_format_lessons_empty_returns_empty() -> None:
     assert format_lessons_for_plan([]) == ""
 
 
-def test_format_lessons_truncates_long_content(tmp_path: Path) -> None:
+def test_format_lessons_truncates_at_char_limit(tmp_path: Path) -> None:
     brain = tmp_path / "brain"
-    long = "## Pattern\n" + "X" * 800
-    write_lesson_file(brain, "api", "001", long)
-    block = format_lessons_for_plan(list_recent_lessons(brain, "api"))
+    write_lesson_file(brain, "api", "001", "## Pattern\n" + "X" * 800)
+    block = format_lessons_for_plan(list_recent_lessons(brain, "api"), char_limit=200)
     assert "..." in block
-    assert len(block) < 1000  # обрезано
+    assert len(block) < 400
+
+
+def test_format_lessons_keeps_moderate_content_intact(tmp_path: Path) -> None:
+    """ContextPack режет урок под свой бюджет — здесь второй раз резать нечего."""
+    brain = tmp_path / "brain"
+    write_lesson_file(brain, "api", "001", "## Pattern\n" + "X" * 800)
+    block = format_lessons_for_plan(list_recent_lessons(brain, "api"))
+    assert "..." not in block
+    assert "X" * 800 in block
 
 
 def test_lessons_dir_creates_path(tmp_path: Path) -> None:

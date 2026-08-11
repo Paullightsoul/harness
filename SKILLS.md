@@ -13,12 +13,19 @@
 
 ## Маппинг скиллов на роли harness
 
-| Роль в harness | Скиллы | Что дают |
-|---|---|---|
-| **Оркестратор** (Opus) | — | Планирует по `prompts/orchestrator.md`, декомпозирует на задачи |
-| **Воркер** (auto → kimi → glm) | `anti-hallucination` + `search-first` + `tdd-workflow` + `token-economy` + `systematic-debugging` | Заземление, переиспользование, TDD, экономия, дебаг |
-| **Ревьюер** (glm-5.2) | `security-review` + `code-quality` | Безопасность, качество кода поверх acceptance criteria |
-| **Re-plan** (Opus) | `systematic-debugging` | Root-cause анализ для refine/split/block |
+> **SoT моделей (Cursor Task Tool):** `harness/tasktool/model_map.py` —
+> orch / worker / reviewer / research → `cursor-grok-4.5-high` (Grok-first;
+> см. `docs/GROK-DEFAULTS.md`). Env: `TASKTOOL_*_MODEL`.
+> Legacy Opus/kimi/glm в таблице ниже — **устарело**.
+> Curated inject 1–3: `skills/catalog.json` + `harness skills select`.
+
+| Роль в harness | Модель (TaskTool) | Скиллы | Что дают |
+|---|---|---|---|
+| **Оркестратор** / planner | `cursor-grok-4.5-high` | `harness-orchestrate` (+ catalog orch_core) | Plan / dispatch / YouTrack honesty |
+| **Воркер** | `cursor-grok-4.5-high` | `anti-hallucination` + `search-first` + `tdd-workflow` + `token-economy` + `systematic-debugging` (inject ≤3) | Заземление, reuse, TDD, экономия, дебаг |
+| **Ревьюер** / goal-judge | `cursor-grok-4.5-high` | `security-review` + `code-quality` | Безопасность, качество поверх AC |
+| **Re-plan** / sub-orch / research | worker model (Grok) | `systematic-debugging` | Root-cause для refine/split/block |
+| **Human-only** (не inject воркеру) | — | `grill-me`, `research`, `handoff`, firecrawl/… | Каталог `packs.human_only` |
 
 ---
 

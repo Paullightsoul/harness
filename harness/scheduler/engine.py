@@ -21,7 +21,6 @@ from typing import Any
 from harness.config import Settings
 from harness.domain.enums import EventType, Role, RunStatus, TaskStatus, Verdict
 from harness.domain.models import AgentEvent, Review, Task
-from harness.domain.state_machine import RECOVERABLE_STATUSES
 from harness.gates.base import GateResult
 from harness.gates.profile_gate import ProfileGate
 from harness.integrations.github import GitHubCli, PullRequest
@@ -36,9 +35,9 @@ from harness.runner.factory import build_runner
 from harness.sandbox.factory import build_sandbox
 from harness.scheduler.dag import TaskGraph
 from harness.store.repository import Store
+from harness.tasktool.lifecycle import TaskLifecycleService, parse_review_verdict
 from harness.worktree.manager import MergeOutcome, WorktreeManager
 
-_VERDICT_RE = "VERDICT:"
 # v2-029: конфликтный diff может быть большим (combined-diff по нескольким файлам) —
 # обрезаем хвостом, чтобы не раздувать контекст следующей попытки.
 _CONFLICT_DIFF_MAX_LINES = 200
@@ -61,10 +60,15 @@ class Engine:
             rungs=settings.escalation_models,
             escalate_after=settings.escalate_after,
         )
-        self._worker_runner = build_runner(worker_cfg.runner)
-        self._reviewer_runner = build_runner(settings.role(Role.REVIEWER).runner)
-        self._orchestrator_runner = build_runner(settings.role(Role.ORCHESTRATOR).runner)
+        self._worker_runner = build_runner(worker_cfg.runner, role=Role.WORKER)
+        self._reviewer_runner = build_runner(
+            settings.role(Role.REVIEWER).runner, role=Role.REVIEWER,
+        )
+        self._orchestrator_runner = build_runner(
+            settings.role(Role.ORCHESTRATOR).runner, role=Role.ORCHESTRATOR,
+        )
         self._notifier = build_notifier(settings.telegram_bot_token, settings.telegram_chat_id)
+        self._lifecycle = TaskLifecycleService(settings, store, self._repo_root)
         self._worktrees: WorktreeManager | None = None
         self._replans: dict[str, int] = {}  # сколько раз задача уже переразбивалась
 
@@ -141,10 +145,12 @@ class Engine:
             self._advance(run_id, task_id, TaskStatus.READY, note="merge conflict при approve")
             await self._notifier.notify("Конфликт мержа", f"run {run_id}, task-{task_id}")
             return
-        gate = await self._gate.check(self._repo_root)
+        gate = await self._check_gates(self._repo_root, task_id, full=True)
         if not gate.passed:
             self._store.add_event(run_id, EventType.ERROR, task_id=task_id,
                                   detail={"reason": "post-merge gate failed"})
+            self._store.set_run_status(run_id, RunStatus.PAUSED.value)
+            return
         await self._complete_merge(run_id, task_id, task.branch, approved=True)
         self._store.set_run_status(run_id, RunStatus.RUNNING.value)
         await self.run(run_id)  # продолжить остаток DAG
@@ -247,7 +253,7 @@ class Engine:
 
             # 2) ГЕЙТЫ
             task = self._advance(run_id, task_id, TaskStatus.GATING)
-            gate = await self._gate.check(worktree)
+            gate = await self._check_gates(worktree, task_id)
             self._store.add_event(
                 run_id, EventType.GATE_RESULT, task_id=task_id,
                 detail={"passed": gate.passed},
@@ -465,10 +471,12 @@ class Engine:
             return
 
         # повторный гейт на интегрированном base: «зелёные по отдельности» != зелёный base
-        gate = await self._gate.check(self._repo_root)
+        gate = await self._check_gates(self._repo_root, task_id, full=True)
         if not gate.passed:
             self._store.add_event(run_id, EventType.ERROR, task_id=task_id,
                                   detail={"reason": "post-merge gate failed"})
+            self._store.set_run_status(run_id, RunStatus.PAUSED.value)
+            return
         await self._complete_merge(run_id, task_id, branch)
 
     # ── v2-029: merge queue eviction context ─────────────────────────────────
@@ -598,11 +606,29 @@ class Engine:
             )
             self._account(run_id, res.cost_credits, cost_kind=res.cost_kind)
             if res.ok and res.text.strip():
+                from harness.brain_agents.sync import (  # noqa: PLC0415
+                    DEFAULT_AGENT_ROOT,
+                    is_human_canon,
+                )
                 from harness.lessons.extractor import write_lesson_file  # noqa: PLC0415
                 run = self._store.get_run(run_id)
                 project = run.project if run else "default"
-                # brain/ — рядом с HARNESS_ROOT/../brain/ (workspace layout).
-                brain_root = self._s.root.parent / "brain"
+                # V4: agent layer only — never auto-write human /home/brain.
+                brain_root = Path(
+                    os.environ.get("HARNESS_BRAIN_ROOT", str(DEFAULT_AGENT_ROOT))
+                ).expanduser()
+                if is_human_canon(brain_root):
+                    self._store.add_event(
+                        run_id, EventType.ERROR, task_id=task_id,
+                        detail={
+                            "where": "lesson extraction",
+                            "error": (
+                                "refusing write to human brain canon; "
+                                "set HARNESS_BRAIN_ROOT=/home/brain-agents"
+                            ),
+                        },
+                    )
+                    return
                 write_lesson_file(brain_root, project, task_id, res.text)
                 self._store.add_event(
                     run_id, EventType.TASK_CREATED, task_id=task_id,
@@ -1178,6 +1204,14 @@ class Engine:
             raise ValueError(f"task {task_id} не найдена в run {run_id}")
         return task
 
+    async def _check_gates(
+        self, cwd: Path, task_id: str, *, full: bool = False
+    ) -> GateResult:
+        """Keep legacy injected gates compatible while ProfileGate supports scoping."""
+        if isinstance(self._gate, ProfileGate):
+            return await self._gate.check(cwd, task_id=task_id, full=full)
+        return await self._gate.check(cwd)
+
     def _advance(self, run_id: str, task_id: str, dst: TaskStatus, note: str = "") -> Task:
         """Прочитать актуальную задачу и сделать валидируемый переход в dst."""
         return self._store.transition_task(self._require_task(run_id, task_id), dst, note=note)
@@ -1200,15 +1234,7 @@ class Engine:
         (ready() её не берёт). Сброс идёт через RECOVERING, чтобы переход был
         валидируемым и попал в журнал (ROADMAP 3.3).
         """
-        for task in self._store.list_tasks(run_id):
-            if TaskStatus(task.status) not in RECOVERABLE_STATUSES:
-                continue
-            origin = task.status
-            recovering = self._store.transition_task(task, TaskStatus.RECOVERING, note="resume")
-            self._store.transition_task(recovering, TaskStatus.READY, note="recovered")
-            self._store.add_event(
-                run_id, EventType.RECOVERED, task_id=task.id, detail={"from": origin}
-            )
+        self._lifecycle.recover(run_id)
 
     def _spent(self, run_id: str) -> float:
         run = self._store.get_run(run_id)
@@ -1280,23 +1306,5 @@ def _format_eviction_context(outcome: MergeOutcome) -> str:
 
 
 def _parse_verdict(text: str) -> Verdict | None:
-    """Берёт последнюю строку с 'VERDICT: APPROVE|CHANGES'. None если не найден.
-
-    Допускает markdown-обёртку (`**VERDICT: APPROVE**`) и префиксы: ищем подстроку,
-    а не начало строки, иначе модели, форматирующие вердикт жирным, ловят ложный CHANGES.
-
-    Возвращает None, если вердикта нет вовсе — движок реагирует не сжиганием попытки
-    на CHANGES, а немедленной эскалацией (`VERDICT_UNPARSED` event + `_escalate`),
-    чтобы malformed-вывод ревьюера не конвертировался в доработку воркера.
-    """
-    last: Verdict | None = None
-    for line in text.splitlines():
-        s = line.strip().upper()
-        idx = s.find(_VERDICT_RE)
-        if idx != -1:
-            tail = s[idx + len(_VERDICT_RE):]
-            if "APPROVE" in tail:
-                last = Verdict.APPROVE
-            elif "CHANGES" in tail:
-                last = Verdict.CHANGES
-    return last
+    """Compatibility wrapper around the shared deterministic lifecycle parser."""
+    return parse_review_verdict(text)

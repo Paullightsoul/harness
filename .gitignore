@@ -8,6 +8,10 @@ logs/
 !.harness/project.toml
 .dbos/
 
+# TaskTool pull runtime (spool under target/.harness/tasktool/ — also covered by
+# .harness/* above when state lives in this repo)
+.harness/tasktool/
+
 # v2 checkpoint: локальные артефакты от dogfood-прогонов (ZY-2nd-flight и т.д.)
 # Не для GitHub — пересоздаются при следующих run'ах.
 projects.json
@@ -15,16 +19,34 @@ reviews/
 tasks/task-*.md
 !tasks/_TEMPLATE.md
 
-# pip build artefacts
+# local run markers / scratch (do not commit)
+run-*
+
+# pip / build artefacts
 harness.egg-info/
+*.egg-info/
+dist/
+build/
+.eggs/
+.tox/
+.nox/
+htmlcov/
+.coverage
+coverage.xml
+node_modules/
 
 # секреты / локальная конфигурация
 .env
 
-# python
+# python / tool caches
 __pycache__/
 *.py[cod]
 .venv/
+venv/
 .mypy_cache/
 .ruff_cache/
 .pytest_cache/
+.hypothesis/
+
+# дампы БД из dogfood-прогонов по целевым проектам (не артефакт harness)
+data/*.db

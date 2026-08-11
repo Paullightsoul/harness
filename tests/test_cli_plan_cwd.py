@@ -22,6 +22,7 @@ class _RecordingRunner:
 
     async def run(
         self, prompt: str, *, model: str, cwd: Path, log_path: Path | None = None,
+        progress_callback: object = None,
     ) -> AgentResult:
         self.calls.append((prompt, model, cwd))
         return AgentResult(ok=True, text="PLAN stub", cost_credits=0.0)
@@ -50,7 +51,7 @@ def test_plan_with_project_uses_repo_cwd(tmp_path: Path, monkeypatch: pytest.Mon
     )
 
     recording = _RecordingRunner()
-    monkeypatch.setattr(cli_module, "build_runner", lambda kind: recording)
+    monkeypatch.setattr(cli_module, "build_runner", lambda kind, role=None: recording)
 
     args = argparse.Namespace(goal="добавить REST API", project="api")
     rc = cli_module.cmd_plan(settings, args)
@@ -71,7 +72,7 @@ def test_plan_without_project_falls_back_to_root(
     """Обратная совместимость: без --project CWD = settings.root."""
     settings = _stub_settings(tmp_path)
     recording = _RecordingRunner()
-    monkeypatch.setattr(cli_module, "build_runner", lambda kind: recording)
+    monkeypatch.setattr(cli_module, "build_runner", lambda kind, role=None: recording)
 
     args = argparse.Namespace(goal="цель", project=None)
     rc = cli_module.cmd_plan(settings, args)

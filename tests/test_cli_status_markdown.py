@@ -47,15 +47,16 @@ def test_status_markdown_contains_sections(tmp_path: Path) -> None:
     md = cli_module._format_status_markdown(run_id, store)
     assert "# Harness status" in md
     assert "run-test" in md
-    assert "## Readiness" in md
+    assert "## Readiness (honesty)" in md
     assert "## Tasks" in md
     assert "## Blocked" in md
     assert "JWT auth" in md
     assert "need human" in md
     # таблица задач
     assert "| id | status | attempts | deps | complexity | title |" in md
-    # completion %
-    assert "completion:" in md
+    # evidence% primary (pipeline secondary)
+    assert "evidence% (primary)" in md
+    assert "pipeline% (FSM, secondary)" in md
 
 
 def test_status_markdown_to_stdout(tmp_path: Path, capsys) -> None:

@@ -1,126 +1,131 @@
-# PLAN — ZY-2nd-flight: починка монорепо + расплод на 4 standalone-репозитория
+# PLAN — Упрощение auth ZY-2nd-flight: удаление auth-service, единый opaque-token flow
 
-> Источник правды по декомпозиции. Монорепо: `/home/ZY-2nd-flight`, ветка `agents/zy-r2-initial`
-> (base для будущего merge — `main`, GitHub `funtech-group/ZY-2nd-flight`).
-> Все факты ниже проверены прогоном `make lint` / `make test` / `mypy` по фактическому репозиторию.
+> Источник правды по декомпозиции цели. Целевой репозиторий воркеров: **`/home/ZY-2nd-flight`**
+> (harness создаёт per-task git-worktree в `ZY-2nd-flight/.worktrees/task-<id>` от base-ветки;
+> зависимые задачи стартуют от base уже с влитыми зависимостями).
+> Все факты ниже проверены чтением фактических файлов и запуском реальных команд в `/home/ZY-2nd-flight`.
 
 ## Цель
 
-1. **Phase A** — устранить CI-блокеры монорепо так, чтобы `cd /home/ZY-2nd-flight && make lint && make test` были зелёными. БЕЗ `git push` / `gh` / merge.
-2. **Phase B** — выделить 4 самостоятельных репозитория (`zy-sdk`, `zy-api-service`, `zy-task-service`, `zy-admin-service`), у каждого свой `pyproject.toml` (standalone, без `[tool.uv.workspace]`), `Dockerfile`, `.github/workflows/ci.yml`, `README.md`, `.harness/project.toml`, `git init` + initial commit.
-3. **Phase C** — локально прогнать CI-эквивалент (`make lint`, `make test`, `docker build`) для монорепо и каждого из 4 репо.
-4. **Human-gate** — `gh repo create` / `git push` / создание PR и merge выполняет ЧЕЛОВЕК. Воркер только готовит чеклист в `reviews/`.
+Упростить авторизацию R2:
 
-## Фактическое состояние репозитория (проверено)
+1. **Удалить избыточный `auth-service`** целиком (сервис-дубликат). Выпуск opaque access token
+   остаётся **только** в `api-service` — `POST /api/v1/user/access-token` (уже реализован через
+   `zy_sdk.auth.AuthTokenStore`).
+2. **Единый shared Redis `AuthTokenStore`** для валидации в `api-service` и `task-service`
+   (уже так — задача лишь фиксирует и чистит хвосты).
+3. **`admin-service` — только Django sessions, без Redis** (сейчас Redis объявлен «для кэша»;
+   убрать из env/compose/докстрингов, чтобы админка вообще не зависела от Redis).
+4. **Удалить JWT-остатки** (неиспользуемые DTO `RefreshTokenRequest` / `AccessTokenResponse`
+   в api-service; упоминания JWT в docs/README/OpenAPI).
+5. **Обновить** compose / Dockerfile / Makefile / CI / ADR / docs под новую (упрощённую) картину.
 
-| Что | Факт |
-|-----|------|
-| Структура | `services/{api-service,task-service,admin-service}` + `libs/sdk` (пакет `zy-sdk`). uv-workspace, `members = ["services/*", "libs/*"]`. |
-| Gates (`.harness/project.toml`) | `lint = make lint`, `test = make test`. |
-| `make lint` | `uv run ruff check services libs` (✅ проходит) + `uv run mypy services libs` (❌ падает). |
-| `make test` | per-member `pytest --import-mode=importlib` по каждому члену + корневой `tests/` (❌ падает на `test_scaffold`). |
-| Версия SDK | `libs/sdk/pyproject.toml` и `__init__.py` → `0.1.0`. Канон = **0.1.0**. |
-| JWT | api-service → `JWT_SECRET_KEY` (канон), task-service → `JWT_SECRET` (чинить task-service). |
+### Что УЖЕ есть в репозитории (проверено чтением)
 
-### Подтверждённые блокеры
+| Факт | Где |
+|------|-----|
+| `AuthTokenStore` (opaque, `secrets.token_urlsafe(32)`, Redis, namespace `gold`) | `libs/sdk/src/zy_sdk/auth/token_store.py` |
+| `build_current_user_dependency`, `UserAuthContext`, `AuthSettings` | `libs/sdk/src/zy_sdk/auth/{dependency,context,settings}.py` |
+| api-service выпускает токен `POST /api/v1/user/access-token` | `services/api-service/src/api_service/api/auth.py` + `services/.../services/auth.py` |
+| api-service валидирует bearer через shared store | `services/api-service/src/api_service/core/auth.py`, `core/container.py` |
+| task-service валидирует bearer через shared store | `services/task-service/src/task_service/core/auth.py`, `core/config.py` |
+| admin-service на Django DB sessions (`SESSION_ENGINE=...backends.db`) | `services/admin-service/src/admin_service/config/settings.py` |
+| **auth-service (дубликат) — подлежит удалению** | `services/auth-service/**`, `deploy/docker/auth-service/**` |
 
-1. **test_scaffold.** `tests/test_scaffold.py::test_zy_sdk_importable` ждёт `zy_sdk.__version__ == "0.0.0"`, фактически `0.1.0`. Канон 0.1.0 → чиним ТЕСТ.
-2. **mypy не в CI.** `.github/workflows/ci.yml` job `lint` гоняет только `ruff check` + `ruff format --check` (без mypy). `make lint` и README заявляют ruff + mypy. → добавить шаг mypy в CI.
-3. **mypy падает (duplicate module + реальные ошибки типов).** Это глубже, чем «перенести admin conftest». Проверено:
-   - `uv run mypy services libs` падает на `Duplicate module named "conftest"` (`services/admin-service/conftest.py` ↔ `services/api-service/tests/conftest.py`). За ним — `Duplicate module named "tests"` (несколько `tests/__init__.py`). Все коллизии — в тестовых каталогах.
-   - mypy сейчас умирает на первой же коллизии и **фактически не проверяет код вообще**. После снятия коллизии всплывают реальные ошибки типов в `src` (см. ниже). Тестовые файлы дают ~120 ошибок `no-untyped-def` (тесты исторически вообще не проверялись).
-   - **Решение (см. Архитектурные решения):** mypy проверяет ТОЛЬКО `src` (исключаем `tests/` из mypy), admin `conftest.py` переносим в `tests/` (единый layout). После этого `mypy services libs` чек-листит 152 src-файла и оставляет ровно **7 реальных ошибок в `src`** (5 в `libs/sdk`, 2 в `services/admin-service/manage.py`) — их и чиним.
-4. **JWT env mismatch.** task-service использует `JWT_SECRET` (`core/config.py:34`, `core/auth.py:84`, `tests/test_tasks.py` ×4, `tests/test_bonus_api.py` ×1). Канон — `JWT_SECRET_KEY`. api-service уже на `JWT_SECRET_KEY` — не трогать.
+### Что дублирует auth-service (почему удаляем)
 
-### Реальные mypy-ошибки в `src` (после исключения tests/) — проверено `mypy services libs --exclude '(^|/)tests/'`
+`services/auth-service/` поднимает FastAPI на порту `8003` и повторяет выпуск токена
+(`POST /auth/v1/access-token`) плюс `introspect` / `revoke` — всё поверх того же
+`zy_sdk.auth.AuthTokenStore`. Выпуск уже есть в api-service; `introspect`/`revoke` в R2
+не используются на hot-path (валидация — прямой Redis GET в каждом сервисе). Сервис —
+чистое дублирование, увеличивающее операционную поверхность.
 
-| Файл | Строка | Код | Суть |
-|------|--------|-----|------|
-| `libs/sdk/src/zy_sdk/broker/events.py` | 63 | `call-arg` | `cls(...)` без `event_id` (поле с `default_factory`, mypy без pydantic-плагина видит как обязательное). |
-| `libs/sdk/src/zy_sdk/redis/lock.py` | 59 | `assignment` | `acquired: bool = await self._redis.set(...)` (правый тип `bool|str|bytes|None`). |
-| `libs/sdk/src/zy_sdk/settings.py` | 51 | `no-any-return` | `return logging.getLevelName(...)` возвращает `Any`. |
-| `libs/sdk/src/zy_sdk/settings.py` | 69 | `prop-decorator` | `@computed_field` поверх `@property`. |
-| `libs/sdk/src/zy_sdk/broker/init.py` | 27 | `import-untyped` | `import aiokafka` без stub/`py.typed`. |
-| `services/admin-service/manage.py` | 8 | `no-untyped-def` | `def main():` без `-> None`. |
-| `services/admin-service/manage.py` | 23 | `no-untyped-call` | вызов нетипизированного `main()` (уйдёт после фикса строки 8). |
+## Фактическое состояние гейтов (ПРОВЕРЕНО командами в `/home/ZY-2nd-flight`)
 
-> api-service (`src`+tests) и task-service `src` под mypy **чистые** — отдельных задач не требуют.
+`.harness/project.toml` целевого репо задаёт гейты:
 
-## Архитектурные решения
+- `lint` → `make lint`  = `ruff check services libs deploy` **+** `ruff format --check services libs deploy` **+** `mypy services libs`
+- `test` → `make test`  = `pytest` по каждому воркспейс-мемберу + `tests/`
 
-### Phase A
+### ⚠️ Предсуществующее КРАСНОЕ состояние baseline (ВНЕ scope цели)
 
-| Область | Решение |
-|---------|---------|
-| Версия SDK | Канон `0.1.0`. Правим ТЕСТ `tests/test_scaffold.py` (`== "0.1.0"`), не SDK. |
-| JWT | Единое `JWT_SECRET_KEY` во всех FastAPI-сервисах. В task-service переименовать `JWT_SECRET`→`JWT_SECRET_KEY` (config, auth, оба теста) и добавить `JWT_SECRET_KEY=` в `.env.example`. api-service не трогаем. |
-| mypy scope | **mypy проверяет только `src` (production-код), `tests/` исключаются** из mypy. Обоснование: (а) duplicate-module коллизии все в тестах; (б) тесты исторически не типизировались (mypy умирал раньше) — приводить ~120 тест-функций к strict сейчас вне scope разблокировки CI; (в) `src` остаётся под strict mypy. Реализация: добавить `"(^\|/)tests/"` в `[tool.mypy] exclude` корневого `pyproject.toml`. |
-| admin conftest | Перенести `services/admin-service/conftest.py` → `services/admin-service/tests/conftest.py` (как у api/task/sdk). Снимает root-level коллизию «conftest» и попадает под исключение `tests/`. pytest по-прежнему его подхватывает (conftest в каталоге тестов). |
-| Фиксы типов в src | 7 ошибок (таблица выше) чиним точечно и file-local (без pydantic-плагина, чтобы не плодить новые ошибки): `# type: ignore[<code>]` с комментарием-объяснением там, где это про сторонние/декораторные ограничения; `int(...)` для `no-any-return`; снять явную аннотацию `: bool` в `lock.py`; добавить `-> None` в `manage.py`. |
-| CI lint | В job `lint` добавить шаг `uv run mypy services libs` (после ruff). `ruff format --check` сохраняем. Job переименовать в `lint (ruff + mypy)`. |
-| Запрет | Никаких `git push` / `gh` / merge. Не менять бизнес-логику в `src` (кроме точечных type-фиксов). |
+Проверено на чистом дереве **до** любых изменений:
 
-### Phase B — standalone-репозитории
+| Команда | Результат | Детали |
+|---|---|---|
+| `ruff check services libs deploy` | ✅ GREEN (exit 0) | — |
+| `ruff format --check services libs deploy` | ❌ RED (exit 1) | **5 файлов** «would be reformatted»: `libs/sdk/src/zy_sdk/auth/token_store.py`, `libs/sdk/tests/test_auth_dependency.py`, `libs/sdk/tests/test_token_store.py`, `services/admin-service/src/admin_service/apps/game/models.py`, `services/admin-service/src/admin_service/apps/onboarding/models.py` |
+| `mypy services libs` | ❌ RED (exit 1) | **51 ошибка в 9 файлах**, все в `services/admin-service/**` (django `ModelAdmin`/`TabularInline` `type-arg`, `no-untyped-def`, `forms.py`, `conditions.py`, `settings.py:1`) |
+| `make test` | ❌ RED (exit 2) | **ровно 1 падение**: `tests/test_scaffold.py::test_admin_service_package_importable` (`admin_service.__doc__ is None`). Все 102 сервис-теста + libs проходят. |
 
-| Решение | Детали |
-|---------|--------|
-| Физическое расположение | Каталоги `/home/zy-sdk`, `/home/zy-api-service`, `/home/zy-task-service`, `/home/zy-admin-service`. Симлинки `/home/projects/zy-*` → `/home/zy-*` (как у остальных проектов в `/home/projects/`). |
-| Зависимость на zy-sdk (локаль) | В `pyproject.toml` сервисов: `[tool.uv.sources] zy-sdk = { path = "../zy-sdk" }` (sibling-layout: репо лежат рядом под `/home`). git/tag-dep — отложено на human-gate (после публикации). |
-| Dev-зависимости | В монорепо ruff/mypy/pytest приходили из корневого `[dependency-groups] dev`. В каждом standalone-репо объявить свою `[dependency-groups] dev` (ruff, mypy, pytest, pytest-asyncio; для admin — pytest-django, django-stubs; для task/sdk — aiosqlite где нужно). |
-| ruff/mypy config | Перенести релевантную часть конфигов из корневого `pyproject.toml` в каждый standalone (strict mypy, exclude tests, ruff select; admin — django-stubs plugin + `django_settings_module`). |
-| Docker build context | **Buildx named build-context**, без `COPY ../` и без гигантского контекста `/home`. Сервис: контекст = каталог сервиса, sdk подаётся как доп. контекст: `docker build --build-context zy_sdk=/home/zy-sdk -t <svc>:test .`; в Dockerfile `COPY --from=zy_sdk . ./zy-sdk/` (раскладка sibling внутри образа, чтобы `../zy-sdk` из path-dep резолвился). Адаптировано из `deploy/docker/*/Dockerfile`. |
-| zy-sdk Docker | Лёгкий multi-stage (builder `uv sync` → runtime venv). CMD — no-op/`python -c "import zy_sdk"`; достаточно успешного `docker build`. |
-| admin Docker | Editable install (BASE_DIR зависит от расположения `settings.py`), `gunicorn`, `collectstatic` — как в монорепо, адаптировано под sibling-layout + named context для `zy_sdk`. path-dep на zy-sdk объявлен (контракт), runtime-import не обязателен. |
-| Источник кода | Копируется из монорепо ПОСЛЕ Phase A: `libs/sdk/` → `zy-sdk`, `services/<svc>/` → `zy-<svc>`. |
-| Git | Каждый репо — отдельный `git init` + initial commit (branch `main`). Монорепо `/home/ZY-2nd-flight` НЕ удаляется. |
+**Следствие для acceptance-критериев.** Полный `make lint` / `make test` НЕ могут быть
+зелёными в рамках этой цели без починки чужого кода (django-admin аннотации, реформат
+моделей, scaffold-тест) — это расширение scope и **запрещено** ролью оркестратора
+(«не чинить лишнее»). Поэтому критерии сформулированы **таргетированно** по фактически
+изменяемым файлам + **guard от регрессий**:
 
-### Phase C — локальная верификация
+**Зелёный подмножество-оракул (ПРОВЕРЕНО):**
 
-```bash
-# Монорепо (после Phase A):
-cd /home/ZY-2nd-flight && make lint && make test && make docker-build
+- `uv run ruff check services libs deploy` → GREEN (держим зелёным).
+- `uv run mypy services/api-service/src services/task-service/src libs/sdk/src` → **GREEN** (`Success: no issues found in 123 source files`).
+- `uv run ruff format --check <изменённые файлы>` → GREEN (изменённых файлов нет в baseline-списке из 5; держать отформатированными).
+- `uv run pytest --import-mode=importlib services/<svc>/tests` → GREEN для api/task/admin/libs.
 
-# Standalone (после 007–011):
-for r in zy-sdk zy-api-service zy-task-service zy-admin-service; do
-  ( cd /home/$r && make lint && make test ); done
-cd /home/zy-sdk && docker build -t zy-sdk:test .
-for s in api task admin; do
-  cd /home/zy-$s-service && docker build --build-context zy_sdk=/home/zy-sdk -t zy-$s-service:test . ; done
-```
+**Guard от регрессий (для всех задач):**
 
-## Задачи
+- Не увеличивать число ошибок `mypy services libs` сверх baseline (51).
+- Не увеличивать число падений `make test` сверх baseline (1 — только `test_scaffold.py`).
+- Не добавлять новых файлов в список `ruff format --check` (baseline: 5).
 
-| id  | фаза | название | depends_on | complexity | status |
-|-----|------|----------|-----------|------------|--------|
-| 001 | A | Исправить test_scaffold: версия zy-sdk 0.1.0 | — | normal | todo |
-| 002 | A | Унифицировать JWT_SECRET_KEY в task-service | — | normal | todo |
-| 003 | A | mypy: исключить tests/ + перенести admin conftest | — | normal | todo |
-| 004 | A | Починить mypy-ошибки в libs/sdk src | — | normal | todo |
-| 005 | A | Починить mypy-ошибки в admin-service/manage.py | — | normal | todo |
-| 006 | A | Добавить mypy в CI lint + зелёные make lint/test | 001,002,003,004,005 | normal | todo |
-| 007 | B | Scaffold standalone репо zy-sdk | 004 | normal | todo |
-| 008 | B | Scaffold standalone репо zy-api-service (+Docker) | 002,007 | high | todo |
-| 009 | B | Scaffold standalone репо zy-task-service (+Docker) | 002,007 | high | todo |
-| 010 | B | Scaffold standalone репо zy-admin-service (+Docker) | 005,007 | high | todo |
-| 011 | B | Симлинки /home/projects/zy-* + projects-index.json | 007,008,009,010 | normal | todo |
-| 012 | C | Верификация CI-эквивалента монорепо | 006 | high | todo |
-| 013 | C | Верификация CI-эквивалента 4 standalone-репо | 008,009,010,011 | high | todo |
-| 014 | gate | [BLOCKED] gh repo create / push / PR / merge | 012,013 | normal | blocked |
+## Архитектурные решения (общие контракты между задачами)
 
-### Граф зависимостей по волнам
+| Область | Решение (контракт) |
+|---|---|
+| **Выпуск токена** | ТОЛЬКО `api-service` `POST /api/v1/user/access-token` → `TokenResponse{access_token, token_type="bearer"}`. Никакого второго эмитента. |
+| **Валидация** | `api-service` и `task-service` — прямой Redis GET через `zy_sdk.auth.AuthTokenStore.validate()` (namespace `gold`, DB `redis://.../3`). Без HTTP introspect, без auth-service. |
+| **admin-service** | Django DB sessions (`SESSION_ENGINE="django.contrib.sessions.backends.db"`, cookie `admin_sessionid`). **Без Redis вообще** и без `zy_sdk.auth`. |
+| **Общий Redis auth** | `AUTH_REDIS_URL`/`REDIS_URL=redis://127.0.0.1:6379/3`, `AUTH_TOKEN_NAMESPACE=gold`, `AUTH_TOKEN_TTL_SECONDS=86400`. Ключ: `gold:auth:token:{token}`. |
+| **auth_service vs auth-service** | Удаляется **пакет `auth_service`** (сервис `auth-service`). ВНИМАНИЕ: в `api-service` есть легитимный класс `AuthService` и DI-переменная `auth_service` (underscore) — их НЕ трогать. Негативные grep'ы ищут дефисный `auth-service`, `from auth_service`/`import auth_service`, `auth/v1`, `introspect`, порт `8003`. |
+| **TD/** | `TD/*.md` и `TD/openapi-gold.yaml` — исходная (замороженная) техспека, исключена из ruff (`extend-exclude`). Историю в TD **не переписываем** (вне scope). Обновляем только `docs/` и `README.md`. |
+| **uv workspace** | Мемберы: `services/*`, `libs/*`. Удаление `services/auth-service/` требует регенерации `uv.lock` (`uv lock`), иначе `uv run` (а значит гейты) сломается на отсутствующем мембере. |
+| **Изоляция задач по файлам** | Задачи владеют непересекающимися наборами файлов (см. таблицу) — чтобы параллельные worktree-ветки мержились без конфликтов. |
 
-```
-Wave 1 (Phase A, параллельно):   001   002   003   004   005
-                                    \    \    |    /    /
-Wave 2 (Phase A gate + sdk):        006        007(←004)
-                                                 |
-Wave 3 (Phase B сервисы):        008(←002,007) 009(←002,007) 010(←005,007)
-                                                 |
-Wave 4 (Phase B линковка):                     011(←007,008,009,010)
-                                                 |
-Wave 5 (Phase C):                012(←006)     013(←008,009,010,011)
-                                                 |
-Wave 6 (human-gate):                           014(←012,013)  [blocked]
-```
+### Ключевые интерфейсы (не менять сигнатуры)
 
-Single-writer-per-file: в каждой волне задачи трогают непересекающиеся наборы файлов.
+- `zy_sdk.auth.AuthTokenStore.create(user_id: str, phone_number: int | None = None) -> str`
+- `zy_sdk.auth.AuthTokenStore.validate(token: str) -> UserAuthContext | None`
+- `zy_sdk.auth.AuthTokenStore.revoke(token: str) -> bool`
+- `api_service.schemas.auth.AccessTokenRequest{phone_number:int}` — **оставить**
+- `api_service.schemas.auth.TokenResponse{access_token:str, token_type:str="bearer"}` — **оставить**
+- `api_service.services.auth.AuthService.issue_access_token(phone_number:int) -> TokenResponse` — **оставить**
+
+## Таблица задач
+
+| ID | Задача | complexity | Зависит от | Владеет файлами (не пересекается с другими) |
+|----|--------|-----------|------------|---------------------------------------------|
+| 001 | Удалить `auth-service` (код, Docker, Makefile, CI, root pyproject, uv.lock) | high | — | `services/auth-service/**` (del), `deploy/docker/auth-service/**` (del), `Makefile`, `.github/workflows/ci.yml`, `pyproject.toml`, `uv.lock` |
+| 002 | api-service: удалить JWT-остатки (`RefreshTokenRequest`, `AccessTokenResponse`) | normal | — | `services/api-service/src/api_service/schemas/auth.py`, `services/api-service/src/api_service/schemas/__init__.py` |
+| 003 | admin-service: зафиксировать «без Redis» в settings-докстринге и README | normal | — | `services/admin-service/src/admin_service/config/settings.py`, `services/admin-service/README.md` |
+| 004 | compose + env + чистка комментариев про auth-service/Redis | normal | — | `docker-compose.app.yml`, `services/api-service/.env.example`, `services/task-service/.env.example`, `services/admin-service/.env.example`, `services/task-service/src/task_service/core/config.py` |
+| 005 | docs/OpenAPI: JWT → opaque bearer | normal | — | `docs/openapi-gold.yaml` |
+| 006 | brain: обновить ADR-0007 + gold-auth-keys + auth/_MOC (вне репо) | normal | — | `/home/brain/decisions/ADR-0007-auth-opaque-tokens-shared-redis.md`, `/home/brain/redis/gold-auth-keys.md`, `/home/brain/auth/_MOC.md` |
+| 007 | root README + финальная интеграционная проверка (нет остатков auth-service/JWT) | normal | 001,002,003,004,005 | `README.md` |
+
+**Порядок выполнения:** 001–006 независимы и могут идти параллельно (непересекающиеся файлы).
+**007 — последняя**, стартует от base с влитыми 001–005: делает in-repo greps по интегрированному
+дереву + правит корневой `README.md`.
+
+### Обоснование зависимостей
+
+- **007 зависит от 001,002,003,004,005**, т.к. её acceptance — репозиторно-широкие негативные
+  grep'ы (нет `auth-service`, нет `auth/v1`, нет JWT в docs/README, нет Redis у admin) — проверяемы
+  только когда все правки уже влиты в base. 007 создаётся от base после мержа зависимостей.
+- **006 не блокирует 007**: brain-файлы лежат вне `/home/ZY-2nd-flight`, на in-repo гейты и greps не влияют.
+- Остальные задачи независимы: наборы файлов не пересекаются → параллельный merge без конфликтов.
+
+### Почему 001 — `high`
+
+Единственная широкая задача: удаление сервиса затрагивает build-wiring (Makefile, CI-matrix,
+root `pyproject` mypy_path/isort), регенерацию `uv.lock` и обязана сохранить гейты зелёными на
+своём подмножестве. Ошибка ломает сборку/линт всего репо → стартуем сразу с сильной модели.
+Остальные задачи — узкие правки (`normal`, сначала дешёвый auto).

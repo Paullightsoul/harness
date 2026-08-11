@@ -17,7 +17,12 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from harness.tasks_io.parser import parse_plan_dependencies, parse_task_file, read_section
+from harness.tasks_io.parser import (
+    parse_plan_dependencies,
+    parse_task_file,
+    read_section,
+    resolve_staging_plan_root,
+)
 
 
 @dataclass
@@ -75,12 +80,15 @@ _AC_EXEC_RE = re.compile(
 def verify_plan(settings_root: Path) -> VerificationReport:  # noqa: PLR0912
     """Проверить PLAN.md + tasks/*.md в `settings_root`.
 
-    `settings_root` — дом harness (где лежат PLAN.md и tasks/).
+    `settings_root` — дом harness. PLAN.md/tasks/ ищутся через `resolve_plan_root`:
+    приоритет `settings_root/.harness/runs/latest/` (обычный результат `harness
+    plan`), фоллбэк — плоская раскладка прямо в `settings_root`.
     Возвращает отчёт; `ok=True` если ни одного error.
     """
     report = VerificationReport(ok=True)
-    plan_path = settings_root / "PLAN.md"
-    tasks_dir = settings_root / "tasks"
+    plan_root = resolve_staging_plan_root(settings_root)
+    plan_path = plan_root / "PLAN.md"
+    tasks_dir = plan_root / "tasks"
 
     if not plan_path.exists():
         report.findings.append(VerificationFinding(

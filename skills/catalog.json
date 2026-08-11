@@ -1,0 +1,150 @@
+{
+  "version": 1,
+  "updated_at": "2026-08-05T00:00:00Z",
+  "policy": {
+    "max_inject_per_dispatch": 3,
+    "forbid_remote_install_mid_run": true,
+    "preferred_root": ".cursor/skills",
+    "pointer_only_context": true
+  },
+  "packs": {
+    "worker_core": [
+      "anti-hallucination",
+      "search-first",
+      "tdd-workflow",
+      "token-economy",
+      "systematic-debugging"
+    ],
+    "reviewer_core": ["security-review", "code-quality"],
+    "orch_core": ["harness-orchestrate"],
+    "human_only": [
+      "grill-me",
+      "research",
+      "handoff",
+      "firecrawl-deep-research",
+      "ai-research-explore"
+    ]
+  },
+  "skills": [
+    {
+      "id": "anti-hallucination",
+      "path": ".cursor/skills/anti-hallucination/SKILL.md",
+      "invocation": "model",
+      "roles": ["worker"],
+      "triggers": ["implement", "edit", "fix"],
+      "eval_gap": "hallucinated APIs",
+      "owner": "harness",
+      "status": "active",
+      "max_body_lines": 500,
+      "stocktake": {"last_seen_runs": 0, "chars": 0}
+    },
+    {
+      "id": "search-first",
+      "path": ".cursor/skills/search-first/SKILL.md",
+      "invocation": "model",
+      "roles": ["worker"],
+      "triggers": ["implement", "explore", "reuse"],
+      "owner": "harness",
+      "status": "active"
+    },
+    {
+      "id": "tdd-workflow",
+      "path": ".cursor/skills/tdd-workflow/SKILL.md",
+      "invocation": "model",
+      "roles": ["worker"],
+      "triggers": ["implement", "test"],
+      "owner": "harness",
+      "status": "active"
+    },
+    {
+      "id": "token-economy",
+      "path": ".cursor/skills/token-economy/SKILL.md",
+      "invocation": "model",
+      "roles": ["worker"],
+      "triggers": ["implement", "context"],
+      "owner": "harness",
+      "status": "active"
+    },
+    {
+      "id": "systematic-debugging",
+      "path": ".cursor/skills/systematic-debugging/SKILL.md",
+      "invocation": "model",
+      "roles": ["worker", "orchestrator"],
+      "triggers": ["fix", "debug", "gate_fail"],
+      "owner": "harness",
+      "status": "active"
+    },
+    {
+      "id": "security-review",
+      "path": ".cursor/skills/security-review/SKILL.md",
+      "invocation": "model",
+      "roles": ["reviewer"],
+      "triggers": ["review"],
+      "owner": "harness",
+      "status": "active"
+    },
+    {
+      "id": "code-quality",
+      "path": ".cursor/skills/code-quality/SKILL.md",
+      "invocation": "model",
+      "roles": ["reviewer"],
+      "triggers": ["review"],
+      "owner": "harness",
+      "status": "active"
+    },
+    {
+      "id": "harness-orchestrate",
+      "path": ".cursor/skills/harness-orchestrate/SKILL.md",
+      "invocation": "model",
+      "roles": ["orchestrator"],
+      "triggers": ["plan", "dispatch"],
+      "owner": "harness",
+      "status": "active"
+    },
+    {
+      "id": "grill-me",
+      "path": ".cursor/skills/grill-me/SKILL.md",
+      "invocation": "human",
+      "roles": ["human"],
+      "triggers": ["grill"],
+      "owner": "workspace",
+      "status": "active"
+    },
+    {
+      "id": "research",
+      "path": ".cursor/skills/research/SKILL.md",
+      "invocation": "human",
+      "roles": ["human"],
+      "triggers": ["research"],
+      "owner": "workspace",
+      "status": "active"
+    },
+    {
+      "id": "handoff",
+      "path": ".cursor/skills/handoff/SKILL.md",
+      "invocation": "human",
+      "roles": ["human"],
+      "triggers": ["handoff"],
+      "owner": "workspace",
+      "status": "active"
+    },
+    {
+      "id": "firecrawl-deep-research",
+      "path": ".agents/skills/firecrawl-deep-research/SKILL.md",
+      "invocation": "human",
+      "roles": ["human"],
+      "triggers": ["research"],
+      "owner": "workspace",
+      "status": "active"
+    },
+    {
+      "id": "ai-research-explore",
+      "path": ".agents/skills/ai-research-explore/SKILL.md",
+      "invocation": "human",
+      "roles": ["human"],
+      "triggers": ["research"],
+      "owner": "workspace",
+      "status": "active"
+    }
+  ]
+}

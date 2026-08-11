@@ -1,103 +1,179 @@
-# Orchestration — оркестратор + воркеры на Cursor CLI (вариант А)
+# Harness V4 (dev) — TaskTool-first control plane
 
-> 🚀 Быстрый старт за 5 минут + промпт для нового чата — **`QUICKSTART.md`**.
-> 📘 Полный гайд — **`GUIDE.md`** (установка, профили любых языков, модели/эскалация,
-> Telegram-бот, durable-режим, мульти-проект, все env-переменные).
-> ⚙️ Установка одной командой: `make setup` (venv + зависимости + .env + `harness doctor`).
+> **This tree is `/home/1.harness-v4`** — clone-and-upgrade of `/home/1.harness`.
+> Production dogfood stays on `1.harness` until Honesty-MVP cutover.
+> Design: `ZY-2nd-flight/harness_reports/HARNESS-V4-TECHNICAL-DESIGN-2026-08-05.md`.
 
-Локальная мульти-агентная разработка целиком на `cursor-agent`. Дорогая модель
-(Opus 4.8) **планирует**, дешёвые воркеры на `auto` **исполняют**, отдельный
-ревьюер **проверяет** — всё в рамках подписки Cursor, без облачных агентов.
+> **Primary path:** attach text/docs in Cursor, say «используй harness», follow
+> `.cursor/skills/harness-orchestrate/SKILL.md`. Root chat is the only Task Tool
+> dispatcher; Python never invokes Task Tool.
+>
+> Quick path → **`QUICKSTART.md`**. Full ops → **`GUIDE.md`**. Architecture →
+> **`ARCHITECTURE.md`**. Background mode (not default) → **`BACKLOG-background-mode.md`**.
 
-```
-Цель ──► ОРКЕСТРАТОР (Opus)  ──►  PLAN.md + tasks/*.md
-                                      │
-              ┌───────────────────────┴───────────────────────┐
-              ▼  для каждой задачи (своя git-ветка)             │
-        ВОРКЕР (auto) ─► make check ─► РЕВЬЮЕР (sonnet) ─► APPROVE? ─► merge
-              ▲                                            │ CHANGES
-              └──────────── фидбэк, до MAX_ATTEMPTS ───────┘
-```
+## V4 vs production `1.harness`
 
-## Почему это решает твои три проблемы
-
-- **Контекстное окно.** Контекст живёт в файлах (`PLAN.md`, `tasks/*.md`), а не в
-  истории чата. Воркер получает только узкую спеку своей задачи. На каждую задачу —
-  свежий агент, без «context rot».
-- **Галлюцинации.** Гейт `make check` (ruff + mypy + pytest) — машинная проверка:
-  выдуманный код физически не пройдёт. Конституция требует заземления на реальные файлы.
-- **Ревью.** Отдельный агент-ревьюер не верит воркеру на слово — читает дифф и гоняет
-  тесты, выносит `APPROVE`/`CHANGES`. Принимается только то, что прошло и гейты, и ревью.
-
-## Требования
-
-- Установлен **Cursor CLI**: `curl https://cursor.com/install -fsS | bash` (см. docs/cli).
-- Python 3.11+, `make`. Инструменты гейтов: `make install` (ruff, mypy, pytest).
-- Репозиторий под git с первым коммитом и веткой `main`.
-
-## Запуск
+| | `/home/1.harness` | `/home/1.harness-v4` (this tree) |
+|--|--|--|
+| Status | dogfood / prod path | experimental upgrade |
+| Version | 0.1.x | **4.0.0-dev** |
+| Worktrees default | `HARNESS_USE_WORKTREES=0` | **`1`** |
+| Soft gates | as in project.toml | inventoried; `HARNESS_ALLOW_SOFT_GATES=0` |
+| Doctor | env check | + `--false-coverage-report` / `--multi-tenant-report` / `--soft-gates-report` |
+| Skills | auto-discovery | + curated `skills/catalog.json` (Phase 0.5) |
+| Brain | `/home/brain` write | **`/home/brain-agents`** agent layer + `harness brain sync` |
+| Economics | — | `HARNESS_ECONOMICS` + solo/team fan-out (Phase 3, default off) |
+| Meta | — | AHE-lite `harness meta` + skill GC (Phase 4, optional) |
 
 ```bash
-# 0) один раз
-make install
-chmod +x scripts/*.sh scripts/hooks/*.sh
-
-# 1) планирование: Opus раскладывает цель на задачи
-./scripts/plan.sh "Добавить REST API управления пользователями на FastAPI"
-#    → проверь PLAN.md и tasks/task-*.md глазами, поправь при желании
-
-# 2) исполнение: воркеры + ревью + мерж
-./scripts/orchestrate.sh
-#    или одну задачу:  ./scripts/orchestrate.sh task-003
+# Invoke v4 explicitly (do not shadow prod unless you mean to):
+export HARNESS_HOME=/home/1.harness-v4   # alias of HARNESS_ROOT
+cd /home/1.harness-v4 && . .venv/bin/activate
+harness doctor
+harness doctor --false-coverage-report --write /tmp/fc.md
+harness doctor --multi-tenant-report --write /tmp/mt.md
+harness doctor --soft-gates-report --write /tmp/sg.md
+harness doctor --meta-eval
+harness skills catalog
+harness skills select --role worker --stage implement
+harness meta eval
+harness skills gc propose
 ```
 
-## Конфигурация (через переменные окружения)
+Deterministic orchestration around Cursor agents: a frozen plan + DAG lives in
+files and SQLite; workers/reviewers run as Task Tool jobs claimed via
+`harness tasktool next` (default wave 12, hard ceiling 16); gates, leases,
+optional worktrees/merge, and checkpoints stay in this control-plane tree.
 
-| Переменная       | По умолчанию | Назначение                                   |
-|------------------|--------------|----------------------------------------------|
-| `ORCH_MODEL`     | `claude-opus-4-8-thinking-high`   | модель планировщика (жжёт пул Third-Party)   |
-| `WORKER_MODEL`   | `auto`       | модель воркеров (в рамках подписки)          |
-| `REVIEWER_MODEL` | `glm-5.2-high` | модель ревьюера (поставь `auto` для экономии)|
-| `ESCALATION_MODELS` | `kimi-k2.5,glm-5.2-high` | ступени эскалации воркера при провалах |
-| `MAX_ATTEMPTS`   | `3`          | попыток доработки на задачу                   |
-| `BASE_BRANCH`    | `main`       | куда мержить принятые задачи                  |
-| `CURSOR_FLAGS`   | —            | доп. флаги, напр. `--api-key ...`             |
+```
+User (ТЗ + docs) ──► Cursor root chat (Task Tool dispatcher)
+                         │ planner Task → PLAN.md + tasks/*
+                         │ harness verify → plan approval
+                         │ harness tasktool start (freeze plan + scope)
+                         ▼
+              next (--limit 12) → root chat invokes ≤12 Task Tool jobs
+              (large task → sub-orchestrator `stage: plan` → advance fans out
+               child tasks from its JSON; children never nest Task Tool)
+                         │ write result JSON → report → advance
+                         ▼
+         scoped gates → review → DONE (manual ship; optional merge mode)
+```
+
+## Why this shape
+
+- **Context stays in files** (`PLAN.md`, `tasks/*`, prompt/result paths) — not in
+  an endless chat transcript.
+- **Python is deterministic** — FSM, store, resource policy, gates, merge. All
+  stochastic work is inside Cursor Task Tool.
+- **Sized for the /home host (24 CPU / 125 GiB)** — defaults: 12 Task jobs / 12 agent slots (hard ceiling 16),
+  worktrees on (v4), manual ship, 5 heavy, 4 gate slots; soft/hard
+  MemAvailable default to ⅛ / ¹⁄₁₆ of capacity (≈16 / 8 GiB here, sane on
+  smaller hosts and inside a cgroup). Admission gates **new claims only** —
+  it cannot stop Task Tool jobs already running in the IDE.
+- **Agent-in-agent (ADR-0012)** — large tasks get a sub-orchestrator dispatch
+  that decomposes into child tasks; the parent returns as the integration
+  worker with children `Provides`.
+- **Context-first** — `harness context` собирает project context (структура,
+  стек, гейты, graphify, brain: ADR/incidents/lessons); компактный brief
+  инжектится в каждый dispatch.
+- **Resume after chat restart** — leases + checkpoints in SQLite; call
+  `harness tasktool resume`, do not invent a second run.
+- **Honesty (Phase 1.5)** — evidence% + acceptance ledger become SoT; FSM% is pipeline only.
+  Honesty ON by default (`HARNESS_EVIDENCE_GATE=1`; escape `=0`). Soft sensors
+  stay refused unless `HARNESS_ALLOW_SOFT_GATES=1` (see `docs/HONESTY-MODE.md`).
+  require `HARNESS_ALLOW_SOFT_GATES=1`.
+
+## Requirements
+
+- Cursor IDE with Task Tool (primary).
+- Python 3.12+, git; `make setup` (or `pip install -e .`) in this repo.
+- Target git repo with a base branch (never `/home` meta-root).
+- Optional: Cursor CLI / `CURSOR_API_KEY` only for **legacy** `harness plan` /
+  `harness run` (SDK/CLI), not for TaskTool-first.
+
+## Primary loop (exact CLI)
 
 ```bash
-REVIEWER_MODEL=auto MAX_ATTEMPTS=2 ./scripts/orchestrate.sh
+make setup && . .venv/bin/activate
+harness doctor
+harness init --repo /abs/path/to/target-repo
+harness projects add --name myapp --repo /abs/path/to/target-repo --base main
+
+# Planner Task (from root chat) writes PLAN.md + tasks/* — then:
+harness verify --project myapp
+# AskQuestion: plan approval — only then:
+harness tasktool start "goal" --project myapp --repo /abs/path/to/target-repo \
+  --base-branch main --approve-plan --spec-source /path/to/spec.md
+
+harness tasktool next "<run-id>" --project myapp --repo /abs/path/to/target-repo \
+  --agent-id "<root-chat-id>" --limit 12
+# … invoke ≤12 Task Tool jobs; write result JSON to result_path …
+harness tasktool report "<dispatch-id>" --project myapp --repo /abs/path/to/target-repo \
+  --result-file /path/to/result.json --agent-id "<root-chat-id>" --ok
+harness tasktool advance "<run-id>" --project myapp --repo /abs/path/to/target-repo
+
+# Questions/risk are separate resumable checkpoints:
+harness tasktool resume "<run-id>" --project myapp --repo /abs/path/to/target-repo \
+  --answer q1="answer"
+harness tasktool resume "<run-id>" --project myapp --repo /abs/path/to/target-repo \
+  --approve-risk
+
+# After ship approval:
+harness tasktool advance "<run-id>" --project myapp --repo /abs/path/to/target-repo \
+  --approved-merge
+harness tasktool status "<run-id>" --project myapp --repo /abs/path/to/target-repo
 ```
 
-## Контроль расходов
+Every `tasktool` command prints **JSON on stdout**. Prompt/result payloads are
+**files**. Minimal result artifact:
 
-Воркеры на `auto` не вычитаются из кредитного пула. Деньги жгут только оркестратор и
-ревьюер на сильных моделях. Следи в `cursor.com/dashboard → Usage` и обязательно
-выстави **Spend Limit** (`Billing → Spend Limits`) — это потолок для авто-цикла.
-
-## Структура
-
-```
-.cursor/
-  agents/        определения агентов для IDE Agents window
-  rules/         конституция проекта (применяется ко всем агентам)
-  hooks.json     guard-хук (доп. защита от деструктивных команд)
-prompts/         системные промпты ролей (их подают скриптам)
-tasks/           _TEMPLATE.md + сгенерированные task-*.md
-reviews/         отчёты ревьюера (task-NNN.md) и блокировки
-scripts/         plan.sh, orchestrate.sh, lib.sh, hooks/guard.sh
-PLAN.md          источник правды по декомпозиции
-Makefile         make check = ruff + mypy + pytest
+```json
+{
+  "dispatch_id": "dispatch-…",
+  "final_text": "HARNESS_DONE\n\n## Provides\n…"
+}
 ```
 
-## Параллелизм (по желанию)
+(`text` / `result` string keys are also accepted; see `GUIDE.md`.)
 
-Сейчас задачи идут последовательно. Для параллельной работы замени в `orchestrate.sh`
-ветки на `git worktree add .worktrees/task-<id>` и запускай воркеров в фоне — каждый в
-своём worktree, без конфликтов рабочей копии.
+## Model routing (TaskTool preference)
 
-## Заметки
+Grok-first — see `docs/GROK-DEFAULTS.md`.
 
-- Имена моделей (`claude-opus-4-8-thinking-high`, `kimi-k2.5`, `glm-5.2-high`) сверены с `cursor-agent models` —
-  при необходимости поправь дефолты в `harness/config.py`.
-- Схема `.cursor/hooks.json` может отличаться между версиями Cursor; реальное
-  принуждение качества обеспечивает `make check`, хук — лишь доп. страховка.
+| Role | Preferred Task Tool model | Env override |
+|---|---|---|
+| Root / planner | Grok 4.5 High (`cursor-grok-4.5-high`) | `TASKTOOL_ORCH_MODEL` |
+| Main reviewer / goal-judge | Grok 4.5 High (`cursor-grok-4.5-high`) | `TASKTOOL_REVIEWER_MODEL` |
+| Worker / sub-orchestrator / research | Grok 4.5 High (`cursor-grok-4.5-high`) | `TASKTOOL_WORKER_MODEL` |
+
+Legacy SDK/CLI model envs (`ORCH_MODEL` / `WORKER_MODEL` / `REVIEWER_MODEL`,
+escalation ladder, `claude-opus-4-8`, `kimi-k2.5`, `glm-5.2`, …) remain for push
+Engine only — TaskTool routing ignores them. See `.env.example`.
+
+## Legacy / compatibility (not primary)
+
+| Path | Status |
+|---|---|
+| `harness mode chat` + file-spool bridge | **Deprecated compatibility** — do not use for new runs |
+| `harness plan` → `ingest` → `run` (SDK/CLI Engine) | Compatibility / experiments |
+| DBOS durable / unattended server workers | **Backlog only** — `BACKLOG-background-mode.md` |
+
+No breaking removal yet.
+
+## Layout
+
 ```
+.cursor/skills/harness-orchestrate/   # primary TaskTool-first skill
+harness/tasktool/                     # pull controller, resources, contracts
+harness/store/                        # SQLite + dispatch leases + events
+harness/worktree/                     # worktrees + generated-artifact excludes
+prompts/  tasks/  PLAN.md
+GUIDE.md  ARCHITECTURE.md  QUICKSTART.md
+BACKLOG-background-mode.md
+```
+
+## Verification
+
+Use the project’s verification commands (`ruff` / `mypy` / `pytest` / fake-driver
+TaskTool tests). Isolated dogfood only after those results are green — do not
+treat this README as a production readiness claim.

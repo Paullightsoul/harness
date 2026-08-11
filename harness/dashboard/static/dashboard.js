@@ -1,7 +1,20 @@
-// v2-014: vanilla JS WebSocket-клиент для live-таймлайна.
+// v2-014 / V4 Phase 2: vanilla JS WebSocket-клиент для live-таймлайна.
 function startDashboard(runId) {
   const eventsEl = document.getElementById("events");
   const wsStatus = document.getElementById("ws-status");
+  const phaseEl = document.getElementById("run-phase");
+  const stallEl = document.getElementById("run-stall");
+
+  function refreshPhase() {
+    fetch("/api/runs/" + runId)
+      .then((r) => r.json())
+      .then((data) => {
+        if (!data || !data.run) return;
+        if (phaseEl) phaseEl.textContent = data.run.phase || "—";
+        if (stallEl) stallEl.textContent = data.run.stall_reason || "none";
+      })
+      .catch(() => {});
+  }
 
   function addEventLine(data) {
     const line = document.createElement("div");
@@ -23,6 +36,14 @@ function startDashboard(runId) {
         statusEl.className = "status status-" + data.detail.to;
         statusEl.textContent = data.detail.to;
       }
+    }
+    if (
+      data.type === "phase_changed" ||
+      data.type === "budget_predicate_hit" ||
+      data.type === "loop_stuck" ||
+      data.type === "judge_approve_blocked"
+    ) {
+      refreshPhase();
     }
   }
 
@@ -48,5 +69,6 @@ function startDashboard(runId) {
     };
     ws.onerror = () => ws.close();
   }
+  refreshPhase();
   connect();
 }

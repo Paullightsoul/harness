@@ -53,3 +53,35 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE tasks ADD COLUMN completion_signals INTEGER NOT NULL DEFAULT 0"
         )
+
+    # TaskTool crash-safe dispatch application receipts.
+    tables = {
+        str(row[0])
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+    }
+    if "dispatch_applications" not in tables:
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS dispatch_applications (
+                dispatch_id TEXT PRIMARY KEY REFERENCES dispatches(dispatch_id) ON DELETE CASCADE,
+                run_id      TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+                task_id     TEXT NOT NULL,
+                status      TEXT NOT NULL,
+                stage       TEXT NOT NULL DEFAULT '',
+                detail      TEXT NOT NULL DEFAULT '{}',
+                created_at  TEXT NOT NULL,
+                updated_at  TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_dispatch_applications_run
+                ON dispatch_applications(run_id, status);
+            """
+        )
+
+    # V4 Phase 0.5: curated skill paths on dispatches.
+    disp_cols = {row["name"] for row in conn.execute("PRAGMA table_info(dispatches)")}
+    if "skill_paths" not in disp_cols:
+        conn.execute(
+            "ALTER TABLE dispatches ADD COLUMN skill_paths TEXT NOT NULL DEFAULT '[]'"
+        )

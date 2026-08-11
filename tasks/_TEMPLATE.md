@@ -2,44 +2,35 @@
 id: "000"
 title: "Краткое название задачи"
 status: "todo"   # todo | in_progress | done | blocked
-complexity: "small"   # v2-019: trivial | small | medium | large
-                     # trivial = worker→gate, без reviewer (дешёвые задачи)
-                     # small   = +reviewer (по умолчанию)
-                     # medium  = +research+plan+PRD-review+review-fix (follow-up v2-019b)
-                     # large   = +final-review (follow-up v2-019b)
+complexity: "small"   # trivial | small | medium | large
 attempts: 0
 ---
 
-# Контекст
-<!-- Зачем эта задача, как связана с остальными. 2-4 предложения. -->
+# Task Brief
 
-# Файлы
-<!-- Точный список файлов, которые можно трогать. Воркер не выходит за этот список без причины. -->
-- src/...
-- tests/...
+## Worktree absolute path
+`/absolute/path/to/worktree`
 
-# Что нужно сделать
-<!-- Конкретные шаги. Чем уже формулировки — тем меньше галлюцинаций. -->
-1.
-2.
+## Owned files only
+- `src/...`
+- `tests/...`
 
-# Acceptance criteria (машинно-проверяемые)
-<!-- Каждый пункт должен быть проверяем тестом или командой. -->
-- [ ] `pytest tests/test_xxx.py` зелёный
-- [ ] `mypy src/xxx.py` без ошибок
-- [ ] <конкретное наблюдаемое поведение>
+## Read-only paths
+- `src/contracts/...`
 
-# Provides
-<!-- v2-004: ОБЯЗАТЕЛЬНО для задач, от которых зависят другие (см. PLAN.md «зависит от»).
-     Интерфейсы, которые эта задача отдаёт зависимым: сигнатуры функций/классов,
-     пути к созданным файлам, DTO/схемы, имена топиков/ключей. Зависимые воркеры
-     получают этот блок как «ИНТЕРФЕЙСЫ ЗАВИСИМОСТЕЙ» и не видят остальной код.
-     Пример:
-       - `src/auth/jwt.py::issue_token(user_id: UUID) -> str`
-       - `src/auth/jwt.py::verify_token(token: str) -> TokenClaims`
-       - DTO: `TokenClaims(sub: UUID, exp: int)` в `src/schemas/auth.py`
-     Если от задачи никто не зависит — секцию можно оставить пустой. -->
+## Frozen contracts (verbatim)
+```text
+<exact signatures, schemas, CLI/API contracts, or "none">
+```
 
-# Запрещено
-<!-- Чего точно нельзя делать в этой задаче. -->
--
+## Acceptance
+- [ ] `<observable criterion or targeted command>`
+
+## Resource class
+`light | standard | heavy | gate`
+
+## Relevant canon pointer
+`<one path or section>`
+
+## Report format
+Changed files; acceptance evidence; relevant gate results; `Provides` for dependents as exact path + symbol/schema; deviations, questions, or risks.

@@ -1,105 +1,120 @@
-# Quickstart — запустить harness за 5 минут
+# Quickstart — TaskTool-first harness
 
-Полный справочник — `GUIDE.md`. Здесь — кратчайший путь и как начать в новом чате.
+Full guide → `GUIDE.md`. Architecture → `ARCHITECTURE.md`.
 
 ---
 
-## A. Один раз (установка)
+## A. One-time setup
 
 ```bash
-cd 1.harness/orchestration
-make setup            # venv + зависимости + .env + проверка (или: make setup --all)
-# поставь Cursor CLI (воркеры на подписке):
-curl https://cursor.com/install -fsS | bash
+cd /home/1.harness          # this repo (branch agents/tasktool-harness-v3)
+make setup                  # venv + deps + .env + doctor
+. .venv/bin/activate
 ```
 
-Открой `.env` и заполни как минимум:
+Edit `.env` for TaskTool routing (see `.env.example`):
 
 ```ini
-CURSOR_API_KEY=cursor_...          # для оркестратора/ревьюера (SDK-роли)
-TELEGRAM_BOT_TOKEN=123:ABC...      # опционально — уведомления/бот
-TELEGRAM_CHAT_ID=123456789
+TASKTOOL_ORCH_MODEL=cursor-grok-4.5-high
+TASKTOOL_WORKER_MODEL=cursor-grok-4.5-high
+TASKTOOL_REVIEWER_MODEL=cursor-grok-4.5-high
 ```
 
-Активируй окружение и проверь готовность:
+Grok-first defaults — see `docs/GROK-DEFAULTS.md`.
 
-```bash
-. .venv/bin/activate
-harness doctor                      # всё ли на месте (python/git/cursor-agent/ключ/профиль)
-```
-
-> Telegram chat_id: напиши своему боту любое сообщение, открой
-> `https://api.telegram.org/bot<TOKEN>/getUpdates` → поле `chat.id`.
+`CURSOR_API_KEY` is only required for legacy SDK/`harness run` paths.
 
 ---
 
-## B. Подготовить проект (любой язык)
+## B. Register a target project
 
 ```bash
-# целевой репозиторий (Python/TS/Go/Rust — определится автоматически)
-harness init --repo /path/to/your-repo
-# зарегистрировать как проект (для мульти-репо)
-harness projects add --name myapp --repo /path/to/your-repo --base main
+harness init --repo /abs/path/to/your-repo
+harness projects add --name myapp --repo /abs/path/to/your-repo --base main
 harness doctor --project myapp
 ```
 
-`harness init` создаёт `.harness/project.toml` с гейтами под стек —
-**проверь команды гейтов** (lint/types/test/build) под свой проект.
+Never point `--repo` at `/home` (meta-root guard).
 
 ---
 
-## C. Прогнать цель
+## C. In a new Cursor chat (primary UX)
 
-```bash
-harness plan   "Добавить REST API управления пользователями" --project myapp 2>/dev/null || \
-harness plan   "Добавить REST API управления пользователями"
-#   ⤷ ОТКРОЙ PLAN.md и tasks/*.md, проверь декомпозицию, поправь при желании
-harness ingest "Добавить REST API управления пользователями" --project myapp
-harness run    --project myapp
-harness status
-harness events
-```
+1. Attach text/docs/specs.
+2. Say: **«используй harness»** (or «use harness»).
+3. Root chat follows `.cursor/skills/harness-orchestrate/SKILL.md`:
+   - `harness context --project myapp` → project context для планнера
+   - planner Task writes `PLAN.md` + `tasks/*`
+   - `harness verify`
+   - plan approval (`AskQuestion`)
+   - `harness tasktool start … --approve-plan --spec-source …`
+   - loop: `next` (max 8) → Task Tool → `report` → `advance`
+     (large-задачи проходят sub-orchestrator декомпозицию автоматически)
+   - risk / ship approvals when required
+   - `resume` after chat restart
 
-Параллельно — уведомления в Telegram (BLOCKED / бюджет / нужен аппрув / готово).
-Для команд из чата запусти бота в отдельном терминале:
-
-```bash
-harness bot     # /runs  /status  /approve <run> <task>
-```
-
-Если включён human-gate (`HUMAN_GATE_MERGE=1`) — подтверждай мерж:
-`harness approve <run_id> <task_id>` (или `/approve` в боте).
+You should **not** start a long-lived Python runner or a file-spool poller.
 
 ---
 
-## D. Как начать в НОВОМ чате Cursor
+## D. Manual CLI skeleton (same contract)
 
-Открой новый агентский чат в каталоге `1.harness/orchestration` и вставь:
+```bash
+harness verify --project myapp
+harness tasktool start "Добавить REST API пользователей" \
+  --project myapp --repo /abs/path/to/your-repo --base-branch main \
+  --approve-plan --spec-source ./spec.md
 
+RUN=$(harness tasktool status …)   # keep run_id from start JSON
+
+harness tasktool next "$RUN" --project myapp --repo /abs/path/to/your-repo \
+  --agent-id root-chat --limit 12
+# write result JSON to the envelope's result_path, then:
+# --agent-id holds the lease (root chat); --worker-id identifies the executor and
+# must be distinct per worker, or the anti-cosplay check refuses DONE.
+harness tasktool report "$DISPATCH" --project myapp --repo /abs/path/to/your-repo \
+  --result-file /path/to/result.json --agent-id root-chat \
+  --worker-id "worker-$DISPATCH" --ok
+harness tasktool advance "$RUN" --project myapp --repo /abs/path/to/your-repo
 ```
-Я работаю с harness (обвязка оркестрации агентов) в этом каталоге.
-Прочитай GUIDE.md и ARCHITECTURE.md. Затем:
-1) проверь готовность: `harness doctor` (и поправь, что красное);
-2) подготовь мой проект: `harness init --repo <ПУТЬ_К_РЕПО>` и зарегистрируй его
-   (`harness projects add --name <ИМЯ> --repo <ПУТЬ> --base main`);
-3) спланируй мою цель: `harness plan "<МОЯ ЦЕЛЬ>"`, покажи мне PLAN.md и tasks/
-   на проверку перед запуском;
-4) после моего ОК — `harness ingest "<МОЯ ЦЕЛЬ>" --project <ИМЯ>` и `harness run --project <ИМЯ>`,
-   следи за `harness status`/`harness events`, BLOCKED-задачи показывай мне.
-Модели: воркер auto → kimi-k2.5 → glm-5.2 (эскалация), ревьюер glm-5.2, планировщик opus.
-Не запускай run, пока я не подтвердил PLAN.
+
+Minimal result file:
+
+```json
+{"dispatch_id":"dispatch-1","final_text":"HARNESS_DONE"}
 ```
 
-Замени `<ПУТЬ_К_РЕПО>`, `<ИМЯ>`, `<МОЯ ЦЕЛЬ>`. Готово — агент проведёт тебя по циклу.
+Ship only after explicit approval:
+
+```bash
+harness tasktool advance "$RUN" --project myapp --repo /abs/path/to/your-repo \
+  --approved-merge
+```
 
 ---
 
-## E. Durable-режим (переживает падения, для долгих/параллельных прогонов)
+## E. Chat restart
 
 ```bash
-make pg-up                 # Postgres в docker (порт 5439)
-# в .env:  HARNESS_DURABLE=1
-harness run --project myapp
+harness tasktool status "<run-id>" --project myapp --repo /abs/path/to/your-repo
+harness tasktool resume "<run-id>" --project myapp --repo /abs/path/to/your-repo
 ```
 
-Демо восстановления: `python scripts/durable_demo.py crash` → `... resume`.
+Если run ждёт ответа или отдельного risk approval:
+
+```bash
+harness tasktool resume "<run-id>" --project myapp --repo /abs/path/to/your-repo \
+  --answer q1="ответ"
+harness tasktool resume "<run-id>" --project myapp --repo /abs/path/to/your-repo \
+  --approve-risk
+```
+
+Do not create a second active run for the same repo/goal.
+
+---
+
+## F. Legacy (deprecated compatibility)
+
+`harness mode chat` / file-spool bridge and `harness plan`→`ingest`→`run` still
+exist. Prefer TaskTool pull mode for all new work. Background unattended workers
+are **not** default — see `BACKLOG-background-mode.md`.

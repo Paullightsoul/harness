@@ -1,0 +1,39 @@
+---
+description: >
+  Directs new user-triggered harness runs to harness-orchestrate. Old chat
+  bridge skills are legacy compatibility only.
+globs:
+  - "**/.harness/bridge/**"
+  - "**/requests/*.json"
+  - "**/responses/*.json"
+alwaysApply: false
+---
+
+# Harness Task Tool orchestration
+
+Для любого нового запуска, инициированного пользователем в Cursor chat, читай и
+используй `.cursor/skills/harness-orchestrate/SKILL.md`.
+
+Обязательный pull-based контракт:
+
+- `harness tasktool start|next|report|advance|status|abort|resume`;
+- CLI печатает JSON в stdout;
+- root chat читает `prompt_path`, вызывает Task Tool и сохраняет ответ в
+  `result_path`;
+- root chat запрашивает не более двух работ:
+  `harness tasktool next --limit 2`;
+- одновременно выполняются максимум 2 вызова Task Tool;
+- корневой Cursor chat — единственный диспетчер Task Tool. Python не может
+  вызывать Task Tool.
+
+Не запускай Python control-plane в фоне и не создавай polling loop.
+
+## Только legacy bridge
+
+`.cursor/skills/harness-chat-orchestrator/SKILL.md` и
+`.cursor/skills/harness-bridge-worker/SKILL.md` относятся только к уже
+существующему legacy file-spool. Не направляй туда новый пользовательский
+запуск. Для незавершённого legacy bridge обработай ограниченный compatibility
+pass из bridge-worker: не более двух запросов, без фонового процесса и без
+polling loop; responses записывай через канонический
+`harness.runner.bridge.write_response`.

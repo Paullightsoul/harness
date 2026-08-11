@@ -34,19 +34,16 @@ def parse_command(text: str) -> tuple[str, list[str]]:
 
 
 def _latest_run_id(store: Store) -> str | None:
-    row = store._conn.execute(  # noqa: SLF001
-        "SELECT id FROM runs ORDER BY created_at DESC LIMIT 1"
-    ).fetchone()
-    return row["id"] if row else None
+    return store.latest_run_id()
 
 
 def format_runs(store: Store, limit: int = 10) -> str:
-    rows = store._conn.execute(  # noqa: SLF001
-        "SELECT id, status, spent_credits FROM runs ORDER BY created_at DESC LIMIT ?", (limit,)
-    ).fetchall()
-    if not rows:
+    runs = store.list_runs(limit=limit)
+    if not runs:
         return "Run'ов нет."
-    return "\n".join(f"{r['id']} [{r['status']}] потрачено {r['spent_credits']:.2f}" for r in rows)
+    return "\n".join(
+        f"{run.id} [{run.status}] потрачено {run.spent_credits:.2f}" for run in runs
+    )
 
 
 def format_status(store: Store, run_id: str | None) -> str:

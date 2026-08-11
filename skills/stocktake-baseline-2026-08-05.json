@@ -1,0 +1,126 @@
+{
+  "root": "/home/1.harness-v4",
+  "files_scanned": 17,
+  "heavy_unmentioned": 9,
+  "items": [
+    {
+      "path": "/home/1.harness-v4/prompts/de-sloppify.md",
+      "kind": "prompt",
+      "size_bytes": 4122,
+      "modified_at": "2026-07-20T13:14:39.856447+00:00",
+      "mentions": 0
+    },
+    {
+      "path": "/home/1.harness-v4/prompts/lesson.md",
+      "kind": "prompt",
+      "size_bytes": 1130,
+      "modified_at": "2026-07-01T12:51:11.643844+00:00",
+      "mentions": 0
+    },
+    {
+      "path": "/home/1.harness-v4/prompts/orchestrator.md",
+      "kind": "prompt",
+      "size_bytes": 3514,
+      "modified_at": "2026-07-28T12:14:45.015166+00:00",
+      "mentions": 0
+    },
+    {
+      "path": "/home/1.harness-v4/prompts/replan.md",
+      "kind": "prompt",
+      "size_bytes": 2712,
+      "modified_at": "2026-07-01T08:48:11.499440+00:00",
+      "mentions": 0
+    },
+    {
+      "path": "/home/1.harness-v4/prompts/reviewer.md",
+      "kind": "prompt",
+      "size_bytes": 3052,
+      "modified_at": "2026-07-28T12:14:45.015166+00:00",
+      "mentions": 0
+    },
+    {
+      "path": "/home/1.harness-v4/prompts/worker.md",
+      "kind": "prompt",
+      "size_bytes": 4083,
+      "modified_at": "2026-07-28T12:14:45.015166+00:00",
+      "mentions": 0
+    },
+    {
+      "path": "/home/1.harness-v4/.cursor/skills/anti-hallucination/SKILL.md",
+      "kind": "skill",
+      "size_bytes": 4725,
+      "modified_at": "2026-07-01T08:48:13.011436+00:00",
+      "mentions": 0
+    },
+    {
+      "path": "/home/1.harness-v4/.cursor/skills/code-quality/SKILL.md",
+      "kind": "skill",
+      "size_bytes": 3671,
+      "modified_at": "2026-07-01T08:48:13.007436+00:00",
+      "mentions": 0
+    },
+    {
+      "path": "/home/1.harness-v4/.cursor/skills/harness-bridge-worker/SKILL.md",
+      "kind": "skill",
+      "size_bytes": 3856,
+      "modified_at": "2026-07-20T13:11:55.466058+00:00",
+      "mentions": 0
+    },
+    {
+      "path": "/home/1.harness-v4/.cursor/skills/harness-chat-orchestrator/SKILL.md",
+      "kind": "skill",
+      "size_bytes": 1815,
+      "modified_at": "2026-07-20T13:10:36.579354+00:00",
+      "mentions": 0
+    },
+    {
+      "path": "/home/1.harness-v4/.cursor/skills/harness-orchestrate/SKILL.md",
+      "kind": "skill",
+      "size_bytes": 14649,
+      "modified_at": "2026-07-29T12:05:30.540062+00:00",
+      "mentions": 0
+    },
+    {
+      "path": "/home/1.harness-v4/.cursor/skills/iterative-retrieval/SKILL.md",
+      "kind": "skill",
+      "size_bytes": 4923,
+      "modified_at": "2026-07-01T12:16:19.542941+00:00",
+      "mentions": 0
+    },
+    {
+      "path": "/home/1.harness-v4/.cursor/skills/search-first/SKILL.md",
+      "kind": "skill",
+      "size_bytes": 4348,
+      "modified_at": "2026-07-01T08:48:13.021436+00:00",
+      "mentions": 0
+    },
+    {
+      "path": "/home/1.harness-v4/.cursor/skills/security-review/SKILL.md",
+      "kind": "skill",
+      "size_bytes": 4106,
+      "modified_at": "2026-07-01T08:48:13.011436+00:00",
+      "mentions": 0
+    },
+    {
+      "path": "/home/1.harness-v4/.cursor/skills/systematic-debugging/SKILL.md",
+      "kind": "skill",
+      "size_bytes": 4999,
+      "modified_at": "2026-07-01T08:48:13.021436+00:00",
+      "mentions": 0
+    },
+    {
+      "path": "/home/1.harness-v4/.cursor/skills/tdd-workflow/SKILL.md",
+      "kind": "skill",
+      "size_bytes": 5133,
+      "modified_at": "2026-07-01T08:48:13.021436+00:00",
+      "mentions": 0
+    },
+    {
+      "path": "/home/1.harness-v4/.cursor/skills/token-economy/SKILL.md",
+      "kind": "skill",
+      "size_bytes": 3946,
+      "modified_at": "2026-07-01T08:48:13.011436+00:00",
+      "mentions": 0
+    }
+  ]
+}

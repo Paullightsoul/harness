@@ -20,6 +20,7 @@ class TaskStatus(StrEnum):
     ESCALATE = "escalate"        # вернулась оркестратору на переразбиение
     RECOVERING = "recovering"    # была in-flight на момент падения процесса -> сброс в READY
     NEEDS_CLARIFICATION = "needs_clarification"  # v2-015: pre-flight brief выявил missing_context
+    POST_MERGE_FIX = "post_merge_fix"  # post-integration gate failed; repair on approved base
 
 
 class RunStatus(StrEnum):
@@ -29,6 +30,7 @@ class RunStatus(StrEnum):
     PAUSED = "paused"            # сработал human-gate или потолок бюджета
     DONE = "done"
     FAILED = "failed"
+    ABORTED = "aborted"          # terminal user abort; no resume/next/advance
 
 
 class Role(StrEnum):
@@ -43,6 +45,34 @@ class RunnerKind(StrEnum):
     SDK = "sdk"
     CLI = "cli"
     CURSOR_TASK = "cursor_task"  # v2-022: chat-режим, Task tool в Cursor IDE
+
+
+class ModelTier(StrEnum):
+    """Стоимость/мощность модели, замороженная в TaskTool-контракте."""
+
+    LIGHT = "light"
+    STANDARD = "standard"
+    HEAVY = "heavy"
+
+
+class ResourceClass(StrEnum):
+    """Класс нагрузки для admission control без привязки к конкретной модели."""
+
+    LIGHT = "light"
+    STANDARD = "standard"
+    HEAVY = "heavy"
+    GATE = "gate"
+
+
+class DispatchStatus(StrEnum):
+    """Жизненный цикл pull-dispatch; владелец очереди меняет статус атомарно."""
+
+    PENDING = "pending"
+    CLAIMED = "claimed"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 class Verdict(StrEnum):
@@ -90,11 +120,32 @@ class EventType(StrEnum):
     GIT_PUSH_FAILED = "git_push_failed"
     # v2-028: de-sloppify cleanup-pass — отдельный агент чистит diff перед reviewer.
     DE_SLOPPIFIED = "de_sloppified"
+    # ADR-0013: запись в пер-проектный журнал работ (<repo>/docs/history/).
+    JOURNAL_WRITTEN = "journal_written"
     # v2-029: merge conflict — eviction context (conflicting files) записан в feedback.
     MERGE_EVICTED = "merge_evicted"
     # v2-033: CI failure recovery — результат опроса gh pr checks / исчерпание попыток.
     CI_CHECK_RESULT = "ci_check_result"
     CI_RECOVERY_EXHAUSTED = "ci_recovery_exhausted"
+    RESOURCE_THROTTLED = "resource_throttled"
+    RESOURCE_PAUSED = "resource_paused"
+    # V4 Phase 0.5 / 1
+    SKILLS_INJECTED = "skills_injected"
+    TENANT_LEASE_ACQUIRED = "tenant_lease_acquired"
+    TENANT_LEASE_RELEASED = "tenant_lease_released"
+    EVIDENCE_RECORDED = "evidence_recorded"
+    ACCEPTANCE_FLIPPED = "acceptance_flipped"
+    ACCEPTANCE_WAIVED = "acceptance_waived"
+    DONE_REFUSED = "done_refused"
+    # V4 Phase 2 — judge seats + governors
+    PHASE_CHANGED = "phase_changed"
+    BUDGET_PREDICATE_HIT = "budget_predicate_hit"
+    JUDGE_APPROVE_BLOCKED = "judge_approve_blocked"
+    SPRINT_CONTRACT_FROZEN = "sprint_contract_frozen"
+    # V4 Phase 3 — economics + brain-agents
+    DECOMPOSE_DENIED = "decompose_denied"
+    BRAIN_SYNCED = "brain_synced"
+    LESSON_WRITTEN = "lesson_written"
     ERROR = "error"
 
 

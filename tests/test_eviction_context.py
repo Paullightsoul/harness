@@ -185,6 +185,31 @@ async def test_successful_merge_does_not_write_eviction_file(tmp_path: Path) -> 
     assert events == []
 
 
+@pytest.mark.asyncio
+async def test_engine_post_merge_gate_failure_does_not_mark_done(tmp_path: Path) -> None:
+    engine = _engine(tmp_path)
+    engine._store.create_run(Run(id="r1", project="p", goal="g", status="running"))
+    engine._store.upsert_task(
+        Task(id="001", run_id="r1", title="t", spec_path="x", status="review")
+    )
+
+    class _StubWorktreesOk:
+        async def merge_to_base(self, branch: str, title: str) -> MergeOutcome:
+            return MergeOutcome(merged=True, conflict=False, output="ok")
+
+    class _FailGate:
+        async def check(self, cwd: Path) -> GateResult:
+            return GateResult(passed=False, output="integration failed")
+
+    engine._worktrees = _StubWorktreesOk()  # type: ignore[assignment]
+    engine._gate = _FailGate()  # type: ignore[assignment]
+
+    await engine._merge("r1", "001", "task/001")
+
+    assert engine._store.get_task("r1", "001").status == "merge_queue"  # type: ignore[union-attr]
+    assert engine._store.get_run("r1").status == "paused"  # type: ignore[union-attr]
+
+
 # ── Регресс: wiring в _process_task / approve_merge ─────────────────────────
 
 def test_process_task_consumes_eviction_context_for_initial_feedback() -> None:

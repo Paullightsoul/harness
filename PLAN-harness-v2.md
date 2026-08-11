@@ -66,7 +66,9 @@
 | v2-019 | 3 | Tiered pipeline depth (trivial/small/medium/large) | v2-001 | high | **done** (minimal; multi-stage follow-up v2-019b) |
 | v2-020 | 4 | `NEEDS_INPUT` + question-protocol | v2-015 | high | **done** (через NEEDS_CLARIFICATION + /answer) |
 | v2-021 | 4 | Completion signal (`HARNESS_DONE`) | — | normal | **done** |
-| v2-022 | 4 | `harness chat` (CursorTaskRunner) | v2-009 | high | **done** (stub + seam; live bridge v2-022b) |
+| v2-022 | 4 | `harness chat` (CursorTaskRunner) | v2-009 | high | **done** (stub + seam) |
+| v2-022b | 4 | Live bridge для CursorTaskRunner (file-spool) | v2-022 | high | **done** |
+| v2-022c | 4 | Chat-режим для ВСЕХ ролей + живые вопросы оркестратора + `harness mode` | v2-022b | high | **done** |
 | v2-023 | 4 | Orchestrator checkpoint (`PLAN_DRAFT`) | v2-018 | normal | **done** |
 | v2-024 | 5 | `SHARED_TASK_NOTES.md` per task | — | normal | **done** |
 | v2-025 | 5 | Lessons-learned → `brain/lessons/` | v2-024 | normal | **done** |
@@ -80,6 +82,10 @@
 | v2-033 | 6 | CI failure recovery | v2-014 | high | **done** (gh-wrapper + poll/fix/re-push цикл, протестирован изолированно; авто-PR на задачу — ROADMAP 3.14, safe no-op seam до её реализации) |
 | v2-034 | 6 | Durable-плейн в боевое (`EngineTaskExecutor`) | v2-009 | high | **done** (live-верифицировано на реальном DBOS+Postgres) |
 | v2-035 | 6 | Skill-stocktake | v2-025 | normal | **done** |
+
+> **v3 TaskTool-first** (ADR-0011) — см. appendix в конце файла. Не смешивать статусы
+> v2 chat-bridge (**done** как compatibility) с primary pull path.
+
 
 ### Граф зависимостей по волнам
 
@@ -99,7 +105,7 @@ Wave 1 (Phase 1, параллельно):  v2-001  v2-002  v2-003  v2-005  v2-00
 Wave 2 (Phase 2-3):             v2-013, v2-016, v2-017, v2-018, v2-019, v2-012
                                    |              |       |
                                    v              |       |
-Wave 3 (Phase 4):             v2-020, v2-021, v2-022, v2-023
+Wave 3 (Phase 4):             v2-020, v2-021, v2-022, v2-022b, v2-023
                                    |
 Wave 4 (Phase 5):             v2-024, v2-025, v2-026, v2-027
                                    |
@@ -975,13 +981,218 @@ subprocess (CLI) или SDK (`Agent.create`). Cursor IDE `Task` tool уже да
    показывает всё живьём пользователю.
 
 **Acceptance criteria:**
-- [ ] `pytest tests/test_cursor_task_runner.py` — мок Task tool, проверка
+- [x] `pytest tests/test_cursor_task_runner.py` — мок Task tool, проверка
       `AgentResult`.
-- [ ] `HARNESS_RUNNER=cursor_task harness run` использует новый runner.
-- [ ] Документация в `GUIDE.md` — когда `chat` vs `run`.
+- [x] `HARNESS_RUNNER=cursor_task harness run` использует новый runner.
+- [x] Документация в `GUIDE.md` — когда `chat` vs `run`.
 
 **Запрещено:**
 - Менять `scheduler/engine.py` (контракт `AgentRunner` тот же).
+
+---
+
+### v2-022b — Live bridge для CursorTaskRunner (file-spool)
+
+```yaml
+id: "v2-022b"
+title: "Live-интеграция CursorTaskRunner через file-spool bridge
+complexity: "high"
+depends_on: ["v2-022"]
+```
+
+**Контекст:** v2-022 закрыл architectural seam (`RunnerKind.CURSOR_TASK` +
+factory + `AgentRunner` contract), но `CursorTaskRunner` был stub — любой вызов
+с bridge-путём возвращал заглушку-ошибку. Нужна реальная двунаправленная связь
+между harness process (внешний Python) и Cursor IDE оркестратором, который
+единственный может вызвать Task tool.
+
+**Почему file-spool, а не MCP/SDK AsyncAgent:**
+- **MCP** — MCP-сервера экспонируют инструменты агенту *внутри* IDE; нет
+  MCP-сервера, оборачивающего IDE-шный Task tool для внешних (не-агентных)
+  клиентов. Harness process не является MCP-клиентом внутри чата.
+- **SDK AsyncAgent** (`cursor_sdk.Agent.create`) — создаёт top-level агента (это
+  уже делает `SdkRunner`), а не Task-tool-сабагента в отдельном окне текущего
+  чата. Это разные вещи: SDK агент — независимый процесс, Task tool сабагент —
+  дочерний вызов внутри существующего чата IDE.
+- **File-spool** — atomic write→rename даёт single-writer/multi-reader
+  семантику без демонов, переживает рестарт любой стороны, дебажится глазами
+  (файлы на диске), тривиально тестируется на `tmp_path` без моков сети.
+
+**Файлы:**
+- `harness/runner/bridge.py` (новый) — протокол request/response
+  (`BridgeRequest`/`BridgeResponse`), atomic write, `wait_response` (async poll
+  с timeout), `list_pending_requests` (для IDE-side poller), `cleanup`.
+- `harness/runner/cursor_task_runner.py` (переписан) — реальный клиент поверх
+  bridge вместо stub. Без `bridge_path` — то же stub-поведение v2-022
+  (back-compat: существующие вызовы не ломаются).
+- `harness/config.py` (`Settings.bridge_dir` property — путь по умолчанию
+  `<root>/.harness/bridge`, переопределяется `HARNESS_CHAT_BRIDGE`).
+- `harness/interface/cli.py` (`cmd_chat` — обновлённая пошаговая инструкция со
+  ссылкой на skill).
+- `.cursor/skills/harness-bridge-worker/SKILL.md` (новый) — IDE-сторона:
+  poller-цикл (list requests → Task tool → atomic write response), протокол,
+  диагностика.
+- `.cursor/rules/40-chat-bridge.mdc` (новый, `alwaysApply: false`, активируется
+  по `globs` на файлы в `.harness/bridge/**`) — подсказывает оркестратор-чату
+  активировать skill, когда видит bridge-директорию.
+- `tests/test_bridge.py` (новый) — протокол: atomic write, poll/timeout,
+  cleanup, `list_pending_requests` (skip processed/invalid).
+- `tests/test_cursor_task_runner.py` (переписан) — live-тесты с fake async
+  responder (пишет response в spool так же, как это делал бы IDE-skill):
+  success, error-response, timeout (request остаётся, не cleanup), cleanup
+  после успеха, запись `log_path`.
+
+**Что сделано:**
+1. Spool-протокол: `<bridge>/requests/<id>.json` (harness → IDE),
+   `<bridge>/responses/<id>.json` (IDE → harness). JSON с полем `proto` для
+   будущей совместимости.
+2. `CursorTaskRunner.run()`: пишет request (atomic), ждёт response
+   (`asyncio.sleep`-poll, не `time.sleep`) до `HARNESS_CHAT_BRIDGE_TIMEOUT`
+   (default 1800s, poll interval `HARNESS_CHAT_BRIDGE_POLL` default 2s).
+   Успех/error-response → cleanup обеих сторон spool. Timeout → request
+   остаётся (orphan, виден пользователю), понятная ошибка с request id.
+3. `harness-bridge-worker` skill — контракт для оркестратор-чата: как читать
+   request, каким вызовом Task tool отвечать, как атомарно писать response,
+   ограничение на `MAX_PARALLEL` одновременных сабагентов, диагностика частых
+   проблем (пустой spool, отсутствующий poller, не-atomic write).
+4. `40-chat-bridge.mdc` — auto-rule по `globs`, чтобы чат сам понял, что он в
+   chat-режиме, увидев файлы bridge.
+5. `harness chat` печатает готовый промпт для вставки в новый чат IDE +
+   env-инструкции.
+
+**Acceptance criteria:**
+- [x] `pytest tests/test_bridge.py tests/test_cursor_task_runner.py` — 22
+      теста, все зелёные (атомарность, poll/timeout, cleanup, live round-trip
+      через fake responder, error-response, log_path).
+- [x] Без `HARNESS_CHAT_BRIDGE`/`bridge_path=None` — тот же stub-error, что и
+      в v2-022 (back-compat, ничего не сломано).
+- [x] `scheduler/engine.py` не тронут — контракт `AgentRunner` идентичен.
+- [x] Полный существующий набор тестов (341 pre-existing + 22 новых = 363)
+      проходит; pre-existing сбои (`test_dashboard.py` без `fastapi`,
+      `test_durable*.py` без рабочего Postgres/psycopg в sandbox-окружении)
+      подтверждены как существовавшие до этой задачи (`git stash` + повтор).
+- [x] `ruff check` / `mypy` чисты на всех новых/изменённых файлах.
+- [x] Документация: `GUIDE.md` §7b (когда `chat` vs `run`, как работает bridge,
+      как запускать) + переменные окружения в §9.
+
+**Запрещено:**
+- Менять `scheduler/engine.py` (не тронут).
+- Менять поведение `CursorTaskRunner` без `bridge_path`/env (back-compat с
+  v2-022 сохранён — stub-error та же семантика).
+
+**Известные ограничения (follow-up, не в этой задаче):**
+- Транскрипт агент-событий (`AgentEvent`) от Task-tool сабагента не собирается
+  (Task tool не отдаёт messages()-подобный API наружу) — `AgentResult.events`
+  всегда пуст для этого runner. Живая трансляция в дашборд/tail — future work.
+- `cost_credits`/`tokens_*` от Task tool сабагента не известны IDE-стороне
+  напрямую — skill пишет 0, runner помечает `cost_kind="estimated"` (та же
+  эвристика, что и в `SdkRunner` для подписочных моделей).
+
+---
+
+### v2-022c — Chat-режим для ВСЕХ ролей + живые вопросы + `harness mode`
+
+```yaml
+id: "v2-022c"
+title: "Единственная точка Task tool для оркестратора/воркера/ревьюера
+complexity: "high"
+depends_on: ["v2-022b"]
+```
+
+**Контекст:** Пользователь описал желаемый флоу — один чат в Cursor IDE, куда
+он ставит задачу (+ документы/тикет), чат сам уточняет детали, запускает
+оркестратора (тоже как Task-tool-сабагент, не SDK), тот может сам задавать
+вопросы для полного понимания, и дальше идут воркеры. Хард-инвариант,
+уточнённый пользователем явно: **все субагенты создаются через Task tool
+внутри основного чата** — harness process не должен спавнить агентов сам ни
+для одной роли, только оркестратор+воркер+ревьюер одинаково через bridge.
+
+v2-022b покрывал только воркера (`WORKER_RUNNER=cursor_task`); оркестратор
+по умолчанию оставался на SDK (`ORCH_RUNNER=sdk`, отдельный top-level
+`Agent.create`, вызываемый из Python, а не Task-tool-сабагент внутри текущего
+чата) — это не совпадало с требованием.
+
+**Файлы:**
+- `harness/runner/bridge.py` (`BridgeRequest.role: str = "worker"` — новое
+  поле, подсказка IDE-стороне о протоколе обработки).
+- `harness/runner/cursor_task_runner.py` (`__init__(..., role: Role | None)`,
+  кладёт `role.value` в `BridgeRequest`).
+- `harness/runner/factory.py` (`build_runner(kind, role=None)` — опциональный
+  keyword, SDK/CLI раннеры его игнорируют).
+- `harness/scheduler/engine.py`, `harness/interface/cli.py` (`cmd_plan`,
+  `cmd_scan --opus`), `harness/durable/executor.py` — все call sites
+  `build_runner(...)` прокинуты с `role=Role.{ORCHESTRATOR,WORKER,REVIEWER}`.
+- `harness/config.py` (`_env_runner` — `HARNESS_RUNNER` master switch: если
+  явный `ROLE_RUNNER` не задан, роль берёт `HARNESS_RUNNER`; явный всегда
+  выигрывает — точечная настройка не теряется).
+- `harness/interface/cli.py` (`cmd_mode` + `harness mode {run|chat|show}` —
+  пишет/читает `.harness/mode.env`, который `main()` грузит ПЕРЕД `.env`).
+- `.cursor/skills/harness-bridge-worker/SKILL.md` (переписан) — два протокола:
+  **A** (`role: "orchestrator"`) — живые вопросы пользователю прямо в чате +
+  Task tool `resume` того же сабагента (не начинать заново — иначе теряется
+  контекст изучения репозитория), response пишется только когда план готов;
+  **B** (`role: "worker"/"reviewer"`) — прозрачная трансляция, вопрос от
+  сабагента долетает до harness как есть, дальше существующий question-protocol
+  (v2-020) сам ставит `NEEDS_CLARIFICATION`.
+- `.cursor/skills/harness-chat-orchestrator/SKILL.md` (новый) — entry-point:
+  весь флоу от сбора требований у пользователя (текст + документы) до
+  `plan`→`ingest`→`run --approve-plan` (каждый шаг запускается чатом самим
+  через свой терминал, `plan`/`run` — в фоне, пока чат параллельно
+  обрабатывает bridge), с PLAN_DRAFT-подтверждением у пользователя перед
+  запуском (v2-023) и финальным отчётом.
+- `.cursor/rules/40-chat-bridge.mdc` (дополнен) — ссылка на entry-point skill
+  и на разделение протоколов A/B по полю `role`.
+- `tests/test_bridge.py`, `tests/test_cursor_task_runner.py` (`role`
+  roundtrip), `tests/test_harness_mode.py` (новый — `_env_runner`, `cmd_mode`),
+  `tests/test_cli_plan_cwd.py` (моки `build_runner` обновлены под новую
+  сигнатуру с `role=`).
+
+**Что сделано:**
+1. `role` — сквозное поле от `Settings.role(...)` → `build_runner(kind, role=)`
+   → `CursorTaskRunner.__init__(role=)` → `BridgeRequest.role`. SDK/CLI раннеры
+   не видят это поле вообще (не участвуют в bridge).
+2. `HARNESS_RUNNER` — единственная переменная, переключающая все 3 роли на
+   `cursor_task` за раз; явные `ORCH_RUNNER`/`WORKER_RUNNER`/`REVIEWER_RUNNER`
+   всегда имеют приоритет (точечная настройка не потеряна).
+3. `harness mode chat|run|show` — обёртка над `HARNESS_RUNNER` через
+   `.harness/mode.env` (не коммитится, в `.gitignore` уже покрыт `.harness/*`),
+   грузится `main()` раньше `.env` — легко переключаться одной командой без
+   вспоминания всех переменных руками.
+4. Протокол A (живые вопросы оркестратора) реализован ЦЕЛИКОМ на стороне
+   IDE-чата (skill-инструкция), НЕ на python-стороне — `cmd_plan` как и раньше
+   ждёт один финальный `AgentResult`, сколько бы раундов `resume` чат ни сделал
+   внутри одного request. Это осознанное решение: не плодить multi-turn
+   protocol на движке, вся сложность диалога — в чате, который и так ведёт
+   разговор с пользователем.
+
+**Acceptance criteria:**
+- [x] `pytest tests/test_bridge.py tests/test_cursor_task_runner.py
+      tests/test_harness_mode.py tests/test_cli_plan_cwd.py` — все зелёные.
+- [x] Полный набор (`pytest -q`, минус durable/dashboard — окружение) —
+      371 passed, 2 skipped, 0 failed (было 343 до этой задачи).
+- [x] `ruff check harness tests .cursor` и `mypy harness` — чисто.
+- [x] `harness mode chat` → все 3 роли (`Settings.role(...).runner`) —
+      `RunnerKind.CURSOR_TASK`; `harness mode run` — назад на дефолты.
+- [x] Явный `REVIEWER_RUNNER=sdk` побеждает `HARNESS_RUNNER=cursor_task`
+      (точечная настройка сохранена).
+- [x] Документация: `GUIDE.md` §7b переписан (два независимых режима,
+      таблица сравнения, протокол A/B, известное ограничение — нет live E2E
+      прогона через реальный Task tool).
+
+**Запрещено:**
+- Молча коммитить/откатывать несвязанные uncommitted изменения в working tree
+  (найдены отдельные v2-036/v2-037 правки multi-project ingest + progress_callback
+  — оставлены как есть по решению пользователя, эта задача их не трогает
+  семантически, только дополняет те же файлы аддитивно).
+
+**Известные ограничения (не в этой задаче):**
+- Живой end-to-end прогон через реальный Task tool не проводился (протокол
+  проверен юнит-тестами с fake responder, имитирующим IDE-сторону). Технический
+  риск выше, чем у `run` (уже отработавшего у пользователя).
+- Протокол A (resume-цикл вопросов) описан как инструкция агенту (skill), не
+  как код — корректность зависит от того, насколько точно чат следует
+  инструкции. Нет автоматической проверки, что чат не начал НОВОГО сабагента
+  вместо `resume`.
 
 ---
 
@@ -1505,8 +1716,9 @@ depends_on: ["v2-025"]
       base.py                  ← v2-003, 009, 011
       sdk_runner.py            ← v2-003, 009, 011
       cli_runner.py            ← v2-003, 007, 009, 011
-      cursor_task_runner.py    ← v2-022 (новый)
-      factory.py               ← v2-022
+      cursor_task_runner.py    ← v2-022 (новый), v2-022b (live), v2-022c (role)
+      bridge.py                ← v2-022b (новый), v2-022c (role в request)
+      factory.py               ← v2-022, v2-022c (role param)
     domain/
       enums.py                 ← v2-013, 015, 020, 021, 023, 028
       state_machine.py         ← v2-015, 019, 020
@@ -1556,3 +1768,34 @@ depends_on: ["v2-025"]
    - `brain/lessons/<service>/` содержит ≥1 lesson после run.
 3. `harness doctor` зелёный, `harness scan` без critical.
 4. ADR-0005 статус `accepted`.
+
+---
+
+## Appendix — TaskTool harness v3 (ADR-0011)
+
+> Дополнение к v2-плану. Primary path после v2-022c. Background mode — отдельный
+> backlog, не часть DoD ниже.
+
+| id | название | status |
+|---|---|---|
+| v3-001 | Protocol PlanArtifact/DispatchEnvelope + ResourcePolicy | **done** |
+| v3-002 | Pull control plane + store leases + CLI `harness tasktool …` | **done** |
+| v3-003 | Skill `harness-orchestrate` (TaskTool-first); deprecate chat bridge skill | **done** |
+| v3-004 | Checkpoints, review bundles, context packs, scoped/full gates, artifact excludes | **done** |
+| v3-005 | Fake-driver / unit TaskTool tests (`tests/test_tasktool_*`) | **done** (verification commands) |
+| v3-006 | Isolated real dogfood after green verification | **in progress** / gated |
+| v3-007 | Docs: README/GUIDE/ARCHITECTURE/QUICKSTART/ROADMAP + `BACKLOG-background-mode.md` | **done** (this wave) |
+| v3-008 | Background mode: cgroups/systemd MemoryMax/CPUQuota, zram/swap, remote workers, queue backpressure, load tests, DBOS/Temporal authoritative store, unattended | **todo** (explicitly not implemented/default) |
+
+**Migration:** `harness mode chat` / file-spool = deprecated compatibility; no breaking
+removal in this wave.
+
+**Acceptance (docs/control plane, not production SLA):**
+
+- [x] CLI surface matches `--help`: `start|next|report|advance|status|abort|resume`
+- [x] `next --limit` default 2; result JSON requires `final_text`/`text`/`result`
+- [x] Resource defaults 2/2/1/1 and soft 3 GiB / hard 2 GiB documented
+- [x] Model routing preference documented (Grok worker / GPT-5.6 planner+reviewer) with env overrides; legacy SDK/CLI envs called out separately
+- [ ] Isolated dogfood signed off only after verification commands are green
+
+**Запрещено в статусах:** помечать v3-008 или unattended DBOS fleet как **done**.

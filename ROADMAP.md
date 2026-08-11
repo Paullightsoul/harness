@@ -1,82 +1,96 @@
 # ROADMAP / HANDOFF — что остаётся доделать
 
 Документ передачи: текущее состояние, как поднять на сервере и что доработать.
-Архитектура — в `ARCHITECTURE.md`. Этот файл — про «что дальше».
+Архитектура — в `ARCHITECTURE.md`. Primary path — **TaskTool-first pull**
+(`harness tasktool …`, skill `harness-orchestrate`). Background unattended —
+`BACKLOG-background-mode.md` (не default). Этот файл — про «что дальше».
 
 ---
 
-## 1. Статус на сейчас
+## 0. TaskTool harness v3 (primary)
+
+| Слой | Состояние | Файлы |
+|---|---|---|
+| ADR / architecture docs | ✅ зафиксировано в дереве docs (+ ADR-0011 вне этого репо) | `ARCHITECTURE.md`, `GUIDE.md`, … |
+| PlanArtifact / DispatchEnvelope | ✅ protocol 3.0 | `harness/tasktool/models.py` |
+| Pull controller + CLI | ✅ `start/next/report/advance/status/abort/resume` | `harness/tasktool/`, `interface/cli.py` |
+| Dispatch leases + store migration | ✅ stale recover ~5 min | `harness/store/` |
+| ResourcePolicy | ✅ 2/2/1/1 + soft 3 GiB / hard 2 GiB | `harness/tasktool/resources.py` |
+| Scoped + full gates + gate lock | ✅ | `lifecycle.py`, `profile_gate.py` |
+| Checkpoints / review bundle / context pack | ✅ | `checkpoint.py`, `review_bundle.py`, `context.py` |
+| Skill `harness-orchestrate` | ✅ primary; chat-orchestrator = legacy | `.cursor/skills/` |
+| Generated artifact exclusion | ✅ | `harness/worktree/manager.py` |
+| Fake-driver / unit TaskTool tests | ✅ присутствуют (`tests/test_tasktool_*`) | verification commands |
+| Isolated real dogfood | ⏳ только после зелёных verification commands | не production claim |
+| Legacy file-spool / `harness mode chat` | ⚠️ deprecated compatibility | `runner/bridge.py`, `mode` |
+| Background / cgroups / remote workers | ❌ backlog | `BACKLOG-background-mode.md` |
+
+**Не утверждать:** «production-ready unattended» или «DBOS fleet готов как default».
+
+---
+
+## 1. Статус на сейчас (legacy push Engine layers)
 
 | Слой | Состояние | Файлы |
 |---|---|---|
 | Domain (автомат, модели) | ✅ готово, покрыт тестами | `harness/domain/` |
-| Store (SQLite + журнал) | ✅ готово | `harness/store/` |
-| Runner (SDK + CLI) | ✅ каркас готов, нужен прогон вживую | `harness/runner/` |
-| Gates (`make check`) | ✅ готово | `harness/gates/` |
-| Worktree + merge queue | ✅ каркас готов, нужен прогон вживую | `harness/worktree/` |
+| Store (SQLite + журнал) | ✅ готово (+ dispatches) | `harness/store/` |
+| Runner (SDK + CLI) | ✅ каркас; legacy vs TaskTool path | `harness/runner/` |
+| Gates (`make check` / profile) | ✅ готово | `harness/gates/` |
+| Worktree + merge queue | ✅ каркас | `harness/worktree/` |
 | Парсер PLAN.md/tasks | ✅ готово, покрыт тестами | `harness/tasks_io/` |
-| Policy (бюджет, эскалация) | ✅ готово, покрыт тестами | `harness/policy/` |
-| Scheduler (DAG + движок) | ✅ каркас готов | `harness/scheduler/` |
-| CLI / реестр / нотификации | ✅ каркас готов | `harness/interface/`, `harness/projects/` |
+| Policy (бюджет, эскалация) | ✅ готово (push Engine) | `harness/policy/` |
+| Scheduler (DAG + движок) | ✅ каркас; compatibility | `harness/scheduler/` |
+| CLI / реестр / нотификации | ✅ + `tasktool` | `harness/interface/`, `harness/projects/` |
 | Bash-вариант (Phase 0) | ✅ рабочий, остаётся | `scripts/` |
 
-**Проверено локально:** Python 3.12; `ruff check` + `mypy harness` (strict, 39 файлов) —
-зелёные; `pytest` — 37 passed (вкл. live durable-тесты на Postgres); dogfood `ProfileGate`
-гоняет реальные ruff/mypy/pytest и проходит; durable-recovery доказан demo-скриптом
-(crash→resume); CLI отвечает (`plan/ingest/run/status/events/projects`).
+**Проверено локально (исторический push Engine + нарастающий TaskTool):** Python 3.12;
+verification commands (`ruff` / `mypy` / pytest including `tests/test_tasktool_*`) —
+гоняй перед dogfood. Isolated dogfood TaskTool — только после зелёных результатов;
+это **не** blanket production claim.
 
-**Durable-плейн (ADR-0003 Фаза 2):** каркас `harness/durable/` на DBOS+Postgres готов и
-проверен вживую. Поднять базу: `make pg-up`. Включение: `HARNESS_DURABLE=1`. Остаётся
-реальный `EngineTaskExecutor` (worktree+runner+ProfileGate вместо fake) — это сводится
-с задачей 3.2 (живой smoke), т.к. оба требуют установленного cursor-agent/SDK.
+**Durable-плейн (ADR-0003):** опциональный experiment (`HARNESS_DURABLE=1`); для
+unattended fleet см. `BACKLOG-background-mode.md` — не default TaskTool path.
 
-**Фаза 3 (ADR-0003):** сделаны лестница эскалации на китайских моделях
-(`auto → kimi → glm`, китайские не сразу; high-сложность стартует с kimi), re-plan
-«умного лида» (refine/split/block, 3.6), anti-gaming guard (3.7), sandbox per-agent
-(`harness/sandbox/`, Local+Docker, `HARNESS_SANDBOX=docker`). Остаётся: дерево
-суб-оркестраторов, воркер внутри sandbox, repointing зависимых при split.
+**Фаза 3 (ADR-0003) push Engine:** лестница эскалации, re-plan, anti-gaming, sandbox
+остаются на legacy path. TaskTool primary использует resource policy + scoped/full
+gates вместо умножения full-suite на каждую параллельную задачу.
 
-**Вживую НЕ прогонялось** (не было git-репо, `cursor-sdk` и Cursor CLI): реальный
-цикл worker→gates→reviewer→merge. Это первое, что надо сделать на сервере.
+**Вживую (TaskTool):** не утверждать полный production E2E без явного dogfood
+результата в этой ветке. Legacy `harness run` E2E также требует cursor-agent/SDK
+на хосте.
 
 ---
 
 ## 2. Поднять на сервере (по шагам)
 
+**Primary (TaskTool-first):** см. `QUICKSTART.md` — `make setup`, register project,
+Cursor chat «используй harness», `harness tasktool …`. Не инициализируй git в `/home`.
+
+**Legacy push Engine (compatibility):**
+
 ```bash
-# 0) Python 3.11+ (требование конституции и pyproject), git, make
-python3 --version            # должно быть >= 3.11
-
-# 1) git-репозиторий (сейчас каталог им НЕ является)
-cd orchestration
-git init && git add -A && git commit -m "init: harness"
-git branch -M main
-
-# 2) зависимости
+# Python 3.12+, git, make
+cd /home/1.harness
 python3 -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"      # ruff/mypy/pytest + сам harness
-pip install -e ".[sdk]"      # только если будешь гонять роли через SDK
-make install                 # инструменты гейтов в целевом проекте
+pip install -e ".[dev]"
+# pip install -e ".[sdk]"   # только если нужны SDK-роли
 
-# 3) Cursor CLI (для воркеров на подписке)
-curl https://cursor.com/install -fsS | bash
-cursor-agent --help          # сверь имена моделей с дефолтами в config.py
+# Cursor CLI — только для legacy CLI workers
+# curl https://cursor.com/install -fsS | bash
 
-# 4) ключ для SDK-ролей (оркестратор/ревьюер)
-export CURSOR_API_KEY="cursor_..."
+export CURSOR_API_KEY="cursor_..."   # legacy SDK
 
-# 5) проверка
-pytest -q
-ruff check harness && mypy harness   # см. задачу 3.1 — mypy ещё не гонялся вживую
-chmod +x scripts/*.sh scripts/hooks/*.sh
+ruff check harness tests
+mypy harness
+# verification commands / TaskTool tests — см. GUIDE §10
 
-# 6) первый прогон на тестовой цели
-python3 -m harness.interface.cli plan "Маленькая фича для проверки"
-#   проверь PLAN.md и tasks/ глазами
-python3 -m harness.interface.cli ingest "Маленькая фича" --project test
-python3 -m harness.interface.cli run
-python3 -m harness.interface.cli status
-python3 -m harness.interface.cli events
+# Legacy cycle (не primary):
+harness plan "Маленькая фича для проверки"
+harness ingest "Маленькая фича" --project test
+harness run --approve-plan
+harness status
+harness events
 ```
 
 ⚠️ **Экономика:** `WORKER_RUNNER=cli` по умолчанию (подписка). SDK тарифицируется из
@@ -264,9 +278,12 @@ python3 -m harness.interface.cli events
 - [ ] **6.6.6** CI failure recovery (после 3.14 GitHub PR): gate fail на PR →
   `gh run view <id>` → fix-pass с логами CI. ECC: Continuous Claude §"CI Failure
   Recovery".
-- [ ] **6.6.7** Durable-плейн в боевое: `EngineTaskExecutor` с реальным
-  worktree+runner+ProfileGate (сейчас fake в `harness/durable/executor.py`). Distributed
-  воркеры по парку VPS. Связано с 3.13.
+- [x] **6.6.7** Durable-плейн в боевое: `EngineTaskExecutor` с реальным
+  worktree+runner+ProfileGate (было fake, см. v2-034 в `PLAN-harness-v2.md`) — сделано и
+  live-верифицировано на DBOS+Postgres. `cmd_run` теперь тоже реально переключается на
+  него по `HARNESS_DURABLE=1` (раньше проверялось только в `doctor`, `run` всегда шёл
+  через asyncio `Engine` — durable-контур был недостижим из CLI; v2-036). Остаётся:
+  distributed воркеры по парку VPS (связано с 3.13).
 - [ ] **6.6.8** Skill-stocktake раз в N run'ов: аудит `prompts/`+`.cursor/skills/` —
   какие реально читались, какие жрут контекст зря. ECC: `skills/skill-stocktake/`.
 
@@ -284,15 +301,16 @@ python3 -m harness.interface.cli events
 
 ## 4. Известные ограничения (важно помнить)
 
-- **Не git-репо из коробки** — нужен `git init` (шаг 2.1).
-- **CLI cost — эвристика** — приблизительная оценка по модели (~0.5–8 кредитов), не реальные токены.
-  SDK-роли дают точный cost. Для точного CLI-учёта нужен парсинг dashboard API (future).
-- **Movie мерж локальный** — в `base` текущего репо, без PR (см. 3.14).
-- **Resume частичный** — переживает падение между задачами; задача, прерванная
-  в середине, требует recovery (см. 3.3).
-- **Схема hooks/имена моделей** могут отличаться между версиями Cursor — сверять (3.4).
-- **Engine конструируется безопасно** даже без `cursor-sdk` (ленивый импорт), но
-  SDK-роль упадёт в рантайме с понятной ошибкой, если пакет не установлен.
+- **Primary path = TaskTool pull** — Python не вызывает Task Tool; root chat обязателен.
+- **`harness mode chat` bridge deprecated** — compatibility only; no breaking removal yet.
+- **Background unattended not default** — cgroups/zram/remote workers required first
+  (`BACKLOG-background-mode.md`).
+- **Не инициализировать `/home` как target repo** — meta-root guard.
+- **CLI cost — эвристика** (legacy SDK/CLI roles).
+- **Merge локальный** — в `base`, без обязательного GitHub PR (см. 3.14).
+- **Resume** — через `harness tasktool resume` + leases/checkpoints, не из истории чата.
+- **Схема hooks/имена моделей** сверять с актуальным Cursor; TaskTool prefs в `.env.example`.
+- **Engine без `cursor-sdk`** конструируется, но SDK-роль упадёт в рантайме (legacy only).
 
 ---
 
@@ -300,22 +318,26 @@ python3 -m harness.interface.cli events
 
 ```
 harness/
-  config.py                 все env-настройки и модели ролей
+  config.py                 env + ResourcePolicy settings
+  tasktool/                 ← PRIMARY pull control plane (v3)
+    controller.py           start/next/report/advance/resume
+    resources.py            admission 2/2/1/1 + mem soft/hard
+    models.py               PlanArtifact / DispatchEnvelope 3.0
+    lifecycle.py            shared deterministic stages
   ingest.py                 PLAN.md/tasks → Run в store
   domain/state_machine.py   ← единственное место смены статусов
-  store/repository.py       ← вся работа с БД и журналом
-  scheduler/engine.py       ← ГЛАВНЫЙ цикл, тут правится логика P0/P1
-  scheduler/dag.py          топосорт + ready()
-  runner/sdk_runner.py      ← сверить с реальным SDK (3.5)
-  runner/cli_runner.py      обёртка cursor-agent
-  worktree/manager.py       worktree + merge queue
-  policy/budget.py          потолок расходов
-  policy/escalation.py      лестница моделей
-  interface/cli.py          точка входа CLI
-tests/                      pytest (pure-logic, 21 шт.)
-scripts/                    bash Phase 0 (рабочий вариант)
+  store/repository.py       ← БД, журнал, dispatch leases
+  scheduler/engine.py       ← legacy push cycle (compatibility)
+  runner/                   sdk/cli + legacy cursor_task bridge
+  worktree/manager.py       worktrees + generated-artifact excludes
+  interface/cli.py          harness tasktool … + legacy commands
+  policy/                   budget / escalation (push Engine)
+tests/                      pytest (incl. tests/test_tasktool_*)
+scripts/                    bash Phase 0
+.cursor/skills/harness-orchestrate/   primary UX skill
+BACKLOG-background-mode.md            unattended backlog (not default)
 PLAN.md / tasks/            артефакты планирования
-ARCHITECTURE.md             как всё устроено
+ARCHITECTURE.md / GUIDE.md  docs
 ```
 
 ---
@@ -327,3 +349,5 @@ Harness считается «готовым к проду», когда:
 2. Хотя бы один реальный проект на VPS прошёл цель end-to-end без ручного вмешательства.
 3. Выставлен Spend Limit + `RUN_BUDGET`, бюджет реально останавливает Run.
 4. BLOCKED-задачи долетают до тебя нотификацией (3.9).
+5. **TaskTool-first:** isolated dogfood зелёный; background mode остаётся в
+   `BACKLOG-background-mode.md` до cgroups/remote workers (не silent default).

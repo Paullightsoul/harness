@@ -33,6 +33,23 @@ def test_parse_spec_files_extracts_paths() -> None:
     assert "src/schemas/**" in paths
 
 
+def test_parse_spec_files_english_owned_table() -> None:
+    from harness.policy.scope import parse_spec_files
+
+    spec = """## Files (owned)
+
+| Path | Action |
+|------|--------|
+| `backend/app/routes/api.php` | **sole write** |
+| `backend/app/app/Http/Controllers/RegionController.php` | map |
+
+**Do not own:** LocationController.php
+"""
+    paths = parse_spec_files(spec)
+    assert "backend/app/routes/api.php" in paths
+    assert "backend/app/app/Http/Controllers/RegionController.php" in paths
+
+
 def test_parse_spec_files_empty_section() -> None:
     assert parse_spec_files("# Контекст\nнет файлов\n") == []
 

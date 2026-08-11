@@ -11,6 +11,8 @@
     <div class="run-meta">
       <span><b>project:</b> <code>{{ run.project }}</code></span>
       <span><b>status:</b> <span class="status status-{{ run.status }}">{{ run.status }}</span></span>
+      <span><b>phase:</b> <span id="run-phase">—</span></span>
+      <span><b>stall:</b> <code id="run-stall">none</code></span>
       <span><b>spent:</b> {{ run.spent_credits }}{% if run.budget_credits %} / {{ run.budget_credits }}{% endif %}</span>
     </div>
     <div class="goal">{{ run.goal }}</div>

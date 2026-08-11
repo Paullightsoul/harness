@@ -118,16 +118,8 @@ def _needle_for(path: Path, kind: str) -> str:
 
 
 def _count_mentions(store: Store, needle: str) -> int:
-    """Сколько раз `needle` встретился в payload агент-событий по всем run'ам.
-
-    Прямой SQL по `store._conn` (служебный read-only доступ, тот же паттерн, что
-    `dashboard/app.py._list_runs` — stocktake не часть публичного контракта Store).
-    """
-    row = store._conn.execute(  # noqa: SLF001
-        "SELECT COUNT(*) AS c FROM agent_events WHERE payload LIKE ?",
-        (f"%{needle}%",),
-    ).fetchone()
-    return int(row["c"]) if row else 0
+    """Сколько раз `needle` встретился в payload агент-событий по всем run'ам."""
+    return store.count_agent_events_matching(needle)
 
 
 def _scan(directory: Path, kind: str, pattern: str, store: Store) -> list[SkillUsage]:
